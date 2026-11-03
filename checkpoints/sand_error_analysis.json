@@ -1,0 +1,61 @@
+{
+  "total_sand_images": 107,
+  "mean_sand_iou": 0.7911345394532104,
+  "missed_as_soil_pct": 2.748130746389687,
+  "missed_as_bedrock_pct": 95.67865532990687,
+  "missed_as_bigrock_pct": 1.5732139237034475,
+  "top_miss_cases": [
+    {
+      "rank": 1,
+      "image_idx": 15,
+      "sand_iou": 0.0,
+      "sand_true_px": 8365,
+      "missed_px": 8365,
+      "confused_with": {
+        "soil": 0,
+        "bedrock": 8365,
+        "sand": 0,
+        "big rock": 0
+      }
+    },
+    {
+      "rank": 2,
+      "image_idx": 50,
+      "sand_iou": 0.0,
+      "sand_true_px": 7905,
+      "missed_px": 7905,
+      "confused_with": {
+        "soil": 0,
+        "bedrock": 7905,
+        "sand": 0,
+        "big rock": 0
+      }
+    },
+    {
+      "rank": 3,
+      "image_idx": 59,
+      "sand_iou": 0.0,
+      "sand_true_px": 7527,
+      "missed_px": 7527,
+      "confused_with": {
+        "soil": 0,
+        "bedrock": 7527,
+        "sand": 0,
+        "big rock": 0
+      }
+    },
+    {
+      "rank": 4,
+      "image_idx": 71,
+      "sand_iou": 0.0,
+      "sand_true_px": 5111,
+      "missed_px": 5111,
+      "confused_with": {
+        "soil": 5111,
+        "bedrock": 0,
+        "sand": 0,
+        "big rock": 0
+      }
+    }
+  ]
+}
