@@ -160,11 +160,35 @@ python src/evaluate.py
 python src/error_analysis.py
 ```
 
-### 6. Launch the Gradio Demo
+### 6. Launch the Mission Control Telemetry Dashboard (Gradio)
 ```bash
 python app.py
 ```
-Open `http://localhost:7860` in your browser to interact with the Mars Rover Terrain Segmentation app, upload custom rover photos, or test curated Curiosity Navcam samples.
+Open `http://localhost:7860` in your browser to launch the **NASA JPL Mission Control Telemetry Dashboard**.
+
+#### 🛰️ Dashboard Capabilities:
+- **🗺️ Multiclass Terrain Map:** Full-resolution semantic segmentation overlay (Soil, Bedrock, Sand, Big Rock) with opacity adjustment.
+- **🚨 Sand Hazard Radar (Spirit Trap Alert):** Isolates loose sand dunes in high-contrast glowing amber, identifying wheel entrapment risks.
+- **🧭 Traversability Costmap:** Renders the numerical costmap utilized by autonomous path planners ($A^* / D^*$):
+  - 🟦 **Bedrock:** Lowest cost (firm pavement, maximum traction)
+  - 🟩 **Soil:** Low cost (nominal driving)
+  - 🟧 **Sand:** High cost (high wheel slip risk)
+  - 🟥 **Big Rock:** Lethal obstacle (chassis collision hazard)
+- **↔️ Side-by-Side Dual View:** Direct split comparison of raw camera frame vs model overlay with laser divider.
+- **📊 Real-Time Telemetry HUD:**
+  - Dynamic Drive Safety Status Banner (`🟢 DRIVE PERMITTED`, `🟡 CAUTION ADVISORY`, `🔴 EMERGENCY HALT & REPLAN`).
+  - Traversability Confidence Index ($0 - 100$).
+  - 4 Progress Meters with exact percentage breakdown and pixel counts.
+  - Recommended Speed, Wheel Slip Estimate, and Steering Action.
+- **💻 Flight Computer Console:** Monospace terminal displaying live simulated timestamped perception logs.
+
+---
+
+## 🖼️ Multi-Terrain Test Results
+
+Below is the multi-terrain benchmark across 6 diverse Martian scenes (sand dunes, boulder fields, mixed junctions, and solid rock shelves):
+
+![Multi-Terrain Test Results](figures/sample_test_results_grid.png)
 
 ---
 
