@@ -6,6 +6,8 @@ __pycache__/
 *.parquet
 data/*.parquet
 checkpoints/*.pth
+checkpoints/*.pt
+checkpoints/*.onnx
 outputs/
 !sample_images/
 
