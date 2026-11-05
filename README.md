@@ -184,6 +184,43 @@ Open `http://localhost:7860` in your browser to launch the **NASA JPL Mission Co
 
 ---
 
+### 7. Standalone CLI Batch Prediction & Costmap Generator
+Run inference and generate terrain overlays + JSON drive telemetry directly from the command line:
+```bash
+# Predict on a single image
+python scripts/predict.py --input sample_images/test_rocky_terrain.jpg --output-dir outputs/
+
+# Batch predict on an entire folder
+python scripts/predict.py --input sample_images/ --output-dir outputs/ --resolution 512
+```
+
+---
+
+### 8. Edge Robotics Deployment: TorchScript & ONNX Export
+Export the DeepLabV3+ model for low-latency onboard robotic compute (NVIDIA Jetson, Edge TPU, ROS/ROS2 nodes):
+```bash
+python scripts/export_onnx.py --checkpoint checkpoints/best_deeplabv3plus.pth --output-dir checkpoints/
+```
+
+---
+
+### 9. Docker Deployment
+Launch the entire system inside a containerized environment with zero dependency conflicts:
+```bash
+docker compose up --build
+```
+Navigate to `http://localhost:7860` to access the Mission Control interface.
+
+---
+
+### 10. Run Unit & Integration Tests
+Execute the comprehensive test suite verifying dataset loading, metric calculation, model architecture, and inference telemetry:
+```bash
+python -m unittest discover -s tests
+```
+
+---
+
 ## 🖼️ Multi-Terrain Test Results
 
 Below is the multi-terrain benchmark across 6 diverse Martian scenes (sand dunes, boulder fields, mixed junctions, and solid rock shelves):
@@ -202,31 +239,34 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
 
 ```
 .
-├── app.py                      # Interactive Gradio demo with Sand Hazard Alert
+├── .github/workflows/ci.yml    # Automated GitHub Actions CI pipeline
+├── Dockerfile                  # Multi-stage production container
+├── docker-compose.yml          # Container orchestration (port 7860)
+├── app.py                      # NASA JPL Mission Control Telemetry Dashboard (Gradio)
 ├── data/                       # Parquet datasets (train_shard0, test_min3, test_min1)
 ├── figures/                    # Generated confusion matrices, overlays, error maps
-│   ├── confusion_matrix_test_min3.png
-│   ├── confusion_matrix_test_min1.png
-│   ├── prediction_test_min3_sample_1.png
-│   └── sand_error_case_1_img_15.png
 ├── notebooks/                  # Google Colab / Kaggle reproducible notebook
-│   └── mars_rover_terrain_segmentation.ipynb
-├── sample_images/              # Curated Curiosity Navcam images for quick testing
-├── scripts/                    # Standalone utility & exploration scripts
-│   ├── download_data.py
-│   ├── explore_data.py
+├── sample_images/              # 18 curated Mars rover testing images
+├── scripts/                    # Utility & deployment scripts
+│   ├── predict.py              # Standalone CLI batch prediction & costmap generator
+│   ├── export_onnx.py          # TorchScript & ONNX edge export utility
+│   ├── download_data.py        # Dataset downloader
+│   ├── explore_data.py         # Exploratory data analysis & figure generator
 │   └── compute_weights_and_baseline.py
 ├── src/                        # Core Python library
 │   ├── dataset.py              # Exclusion masks, preprocessing, PyTorch Dataset
 │   ├── model.py                # DeepLabV3+ with ResNet-50 & Weighted CE Loss
+│   ├── inference.py            # Standalone MarsTerrainSegmenter & telemetry engine
 │   ├── metrics.py              # Confusion matrix, IoU per class, Pixel Accuracy
 │   ├── train.py                # Full training & validation loop
 │   ├── evaluate.py             # Evaluation on expert test splits
 │   ├── error_analysis.py       # Sand failure mode analysis
 │   └── visualization.py        # Color palettes, overlays, and diagnostic plots
-└── tests/                      # Unit tests
+└── tests/                      # Automated unit & integration test suite
     ├── test_dataset.py
-    └── test_metrics.py
+    ├── test_metrics.py
+    ├── test_model.py
+    └── test_inference.py
 ```
 
 ---
