@@ -1,0 +1,18 @@
+version: "3.8"
+
+services:
+  mars-rover-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mars_rover_telemetry_hud
+    ports:
+      - "7860:7860"
+    environment:
+      - GRADIO_SERVER_NAME=0.0.0.0
+      - GRADIO_SERVER_PORT=7860
+    volumes:
+      - ./checkpoints:/app/checkpoints:ro
+      - ./sample_images:/app/sample_images:ro
+      - ./outputs:/app/outputs:rw
+    restart: unless-stopped

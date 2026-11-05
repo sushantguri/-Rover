@@ -1,0 +1,16 @@
+.git/
+.gitignore
+.dockerignore
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.DS_Store
+*.parquet
+data/*.parquet
+checkpoints/*.pth
+outputs/
+.github/
+notebooks/
+tests/
+figures/
