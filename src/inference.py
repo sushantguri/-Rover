@@ -1,0 +1,155 @@
+"""
+Standalone Inference and Robotic Telemetry Pipeline.
+Provides high-performance inference on single images or directories of Mars rover frames.
+Generates multiclass terrain maps, sand hazard alerts, robot path-planning costmaps, and JSON telemetry.
+"""
+import os
+import json
+import time
+from typing import Dict, Any, Tuple, Optional
+import numpy as np
+from PIL import Image
+import torch
+
+from src.model import get_deeplabv3plus_model
+from src.dataset import CLASSES
+from src.visualization import create_overlay
+
+# Costmap palette: Bedrock=Cyan/Blue, Soil=Green, Sand=Orange (Hazard), Big Rock=Red (Obstacle)
+COST_PALETTE = np.array([
+    [76, 175, 80],     # 0: Soil
+    [33, 150, 243],    # 1: Bedrock
+    [255, 152, 0],     # 2: Sand
+    [239, 68, 68],     # 3: Big Rock
+], dtype=np.uint8)
+
+
+class MarsTerrainSegmenter:
+    """
+    Production-grade inference engine for Mars rover terrain segmentation.
+    """
+    def __init__(self, checkpoint_path: str = "checkpoints/best_deeplabv3plus.pth", device: Optional[str] = None):
+        if device is None:
+            if torch.backends.mps.is_available():
+                self.device = torch.device("mps")
+            elif torch.cuda.is_available():
+                self.device = torch.device("cuda")
+            else:
+                self.device = torch.device("cpu")
+        else:
+            self.device = torch.device(device)
+
+        self.model = get_deeplabv3plus_model(num_classes=4).to(self.device)
+        
+        if os.path.exists(checkpoint_path):
+            ckpt = torch.load(checkpoint_path, map_location=self.device)
+            self.model.load_state_dict(ckpt["model_state_dict"])
+            self.has_weights = True
+        else:
+            self.has_weights = False
+
+        self.model.eval()
+        self.mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
+        self.std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
+
+    def predict(
+        self, 
+        image_input: Image.Image | np.ndarray | str, 
+        img_size: int = 512,
+        sand_threshold: float = 25.0,
+        opacity: float = 0.60
+    ) -> Dict[str, Any]:
+        """
+        Runs full terrain perception, generates visualizations, and computes drive telemetry.
+        """
+        # Load image
+        if isinstance(image_input, str):
+            orig_img = Image.open(image_input).convert("RGB")
+        elif isinstance(image_input, np.ndarray):
+            orig_img = Image.fromarray(image_input).convert("RGB")
+        else:
+            orig_img = image_input.convert("RGB")
+
+        orig_w, orig_h = orig_img.size
+        orig_np = np.array(orig_img)
+
+        # Preprocess
+        t0 = time.time()
+        resized = orig_img.resize((img_size, img_size), Image.BILINEAR)
+        arr = np.array(resized, dtype=np.float32) / 255.0
+        normalized = (arr - self.mean) / self.std
+        tensor = torch.from_numpy(normalized).permute(2, 0, 1).unsqueeze(0).to(self.device)
+
+        # Forward pass
+        with torch.no_grad():
+            logits = self.model(tensor)
+            pred_map = torch.argmax(logits, dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
+
+        # Scale prediction back to original dimensions
+        pred_full = np.array(Image.fromarray(pred_map).resize((orig_w, orig_h), Image.NEAREST), dtype=np.int64)
+        latency_ms = (time.time() - t0) * 1000.0
+
+        # Create Visual Overlays
+        overlay_multiclass = create_overlay(orig_np, pred_full, alpha=opacity, highlight_sand=False)
+        overlay_sand_hazard = create_overlay(orig_np, pred_full, alpha=0.80, highlight_sand=True)
+        
+        # Create Traversability Costmap
+        cost_colored = COST_PALETTE[np.clip(pred_full, 0, 3)]
+        costmap_overlay = (orig_np * (1.0 - opacity) + cost_colored * opacity).astype(np.uint8)
+
+        # Telemetry Analysis
+        total_pixels = pred_full.size
+        class_pcts = {}
+        class_pixels = {}
+        for c_id, c_name in enumerate(CLASSES):
+            px = int((pred_full == c_id).sum())
+            class_pixels[c_name] = px
+            class_pcts[c_name] = float((px / total_pixels) * 100.0)
+
+        sand_pct = class_pcts["sand"]
+        rock_pct = class_pcts["big rock"]
+        bedrock_pct = class_pcts["bedrock"]
+        soil_pct = class_pcts["soil"]
+
+        # Traversability Index (0 to 100)
+        traversability_index = float(bedrock_pct * 1.0 + soil_pct * 0.85 + sand_pct * 0.15 + rock_pct * 0.0)
+        traversability_index = max(0.0, min(100.0, traversability_index))
+
+        # Autonomous Decision Logic
+        if sand_pct >= sand_threshold:
+            safety_status = "CRITICAL_HAZARD"
+            drive_action = "EMERGENCY_HALT_AND_REPLAN"
+            recommended_speed_cm_s = 0.0
+            slip_probability = "HIGH (> 85%)"
+        elif sand_pct > 8.0 or rock_pct > 2.0:
+            safety_status = "CAUTION_ADVISORY"
+            drive_action = "SLOW_CREEP_MODE"
+            recommended_speed_cm_s = 1.8
+            slip_probability = "MODERATE (25-40%)"
+        else:
+            safety_status = "NOMINAL_DRIVE"
+            drive_action = "CONTINUE_WAYPOINT_TRAVERSE"
+            recommended_speed_cm_s = 4.5
+            slip_probability = "LOW (< 5%)"
+
+        telemetry = {
+            "image_dimensions": {"width": orig_w, "height": orig_h},
+            "inference_resolution": img_size,
+            "inference_latency_ms": round(latency_ms, 2),
+            "device": str(self.device),
+            "terrain_distribution_pct": class_pcts,
+            "terrain_pixel_counts": class_pixels,
+            "traversability_index": round(traversability_index, 2),
+            "safety_status": safety_status,
+            "autonomous_drive_action": drive_action,
+            "recommended_speed_cm_s": recommended_speed_cm_s,
+            "wheel_slip_probability": slip_probability
+        }
+
+        return {
+            "prediction_mask": pred_full,
+            "overlay_multiclass": overlay_multiclass,
+            "overlay_sand_hazard": overlay_sand_hazard,
+            "overlay_costmap": costmap_overlay,
+            "telemetry": telemetry
+        }

@@ -6,5 +6,6 @@ __pycache__/
 *.parquet
 data/*.parquet
 checkpoints/*.pth
+outputs/
 !sample_images/
 
