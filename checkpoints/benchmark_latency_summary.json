@@ -1,0 +1,39 @@
+{
+  "device": "mps",
+  "iterations": 5,
+  "benchmarks": {
+    "256x256": {
+      "resolution": [
+        256,
+        256
+      ],
+      "mean_latency_ms": 17.59,
+      "median_latency_ms": 17.97,
+      "p95_latency_ms": 18.41,
+      "p99_latency_ms": 18.43,
+      "throughput_fps": 56.9
+    },
+    "384x384": {
+      "resolution": [
+        384,
+        384
+      ],
+      "mean_latency_ms": 32.2,
+      "median_latency_ms": 31.75,
+      "p95_latency_ms": 33.35,
+      "p99_latency_ms": 33.59,
+      "throughput_fps": 31.1
+    },
+    "512x512": {
+      "resolution": [
+        512,
+        512
+      ],
+      "mean_latency_ms": 106.85,
+      "median_latency_ms": 107.48,
+      "p95_latency_ms": 133.33,
+      "p99_latency_ms": 138.45,
+      "throughput_fps": 9.4
+    }
+  }
+}
