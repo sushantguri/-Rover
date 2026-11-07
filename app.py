@@ -14,6 +14,7 @@ import gradio as gr
 from src.model import get_deeplabv3plus_model
 from src.dataset import CLASSES
 from src.visualization import create_overlay
+from src.path_planner import MarsPathPlanner
 
 SAMPLE_DIR = "sample_images"
 curated_sample_paths = [
@@ -98,7 +99,7 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
             <div style="font-size: 13px; color: #64748b; margin-top: 4px;">Upload a Mars rover image or select a mission sample to initiate terrain telemetry.</div>
         </div>
         """
-        return None, None, None, None, empty_msg, ""
+        return None, None, None, None, None, empty_msg, ""
 
     t_start = time.time()
     model = load_inference_model()
@@ -141,6 +142,11 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
     
     # 4. Side-by-Side Dual View
     side_by_side_view = make_side_by_side_comparison(orig_np, overlay_standard)
+    
+    # 5. Autonomous A* Trajectory Path
+    planner = MarsPathPlanner(obstacle_inflation_radius=2)
+    path_data = planner.plan_path(pred_np, planning_resolution=128)
+    trajectory_view = planner.render_path_overlay(overlay_standard, path_data)
     
     # Metrics Computation
     total_pixels = pred_np.size
@@ -304,7 +310,7 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
 [UTC {now_utc}] [AUTONAV-PLANNER] Drive Command: {speed_rec} | Mode: {steering_mode}
 [UTC {now_utc}] [WATCHDOG] Ready for next frame capture."""
 
-    return overlay_standard, sand_hazard_view, costmap_view, side_by_side_view, telemetry_html, flight_log
+    return overlay_standard, sand_hazard_view, costmap_view, side_by_side_view, trajectory_view, telemetry_html, flight_log
 
 
 # High-Tech NASA JPL Dark Glassmorphism CSS
@@ -703,6 +709,8 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
                     output_costmap = gr.Image(type="numpy", label="Autonomous Path-Planning Costmap (A*/D*)", height=420)
                 with gr.TabItem("↔️ Side-by-Side Dual View"):
                     output_sbs = gr.Image(type="numpy", label="Original Rover Photo vs Segmented Classification", height=420)
+                with gr.TabItem("🚀 A* Autonomous Drive Path"):
+                    output_path = gr.Image(type="numpy", label="Collision-Free A* Navigation Trajectory", height=420)
                     
             # Telemetry Metrics Dashboard
             stats_box = gr.HTML("""
@@ -746,7 +754,7 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
     submit_btn.click(
         fn=segment_mars_terrain,
         inputs=[input_image, opacity_slider, img_size_dropdown, sand_thresh_slider],
-        outputs=[output_overlay, output_sand, output_costmap, output_sbs, stats_box, flight_terminal]
+        outputs=[output_overlay, output_sand, output_costmap, output_sbs, output_path, stats_box, flight_terminal]
     )
 
 if __name__ == "__main__":

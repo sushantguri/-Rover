@@ -135,3 +135,4 @@ async def plan_trajectory(
         response["trajectory_overlay"] = encode_image_base64(path_overlay)
 
     return JSONResponse(content=response)
+

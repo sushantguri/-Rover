@@ -221,3 +221,4 @@ class MarsPathPlanner:
 
         combined = Image.alpha_composite(img_pil, overlay).convert("RGB")
         return np.array(combined)
+

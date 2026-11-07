@@ -175,6 +175,7 @@ Open `http://localhost:7860` in your browser to launch the **NASA JPL Mission Co
   - 🟧 **Sand:** High cost (high wheel slip risk)
   - 🟥 **Big Rock:** Lethal obstacle (chassis collision hazard)
 - **↔️ Side-by-Side Dual View:** Direct split comparison of raw camera frame vs model overlay with laser divider.
+- **🚀 A* Autonomous Drive Path:** Real-time $A^*$ trajectory planning avoiding sand dunes and rock obstacles with start/goal nodes.
 - **📊 Real-Time Telemetry HUD:**
   - Dynamic Drive Safety Status Banner (`🟢 DRIVE PERMITTED`, `🟡 CAUTION ADVISORY`, `🔴 EMERGENCY HALT & REPLAN`).
   - Traversability Confidence Index ($0 - 100$).
@@ -196,7 +197,32 @@ python scripts/predict.py --input sample_images/ --output-dir outputs/ --resolut
 
 ---
 
-### 8. Edge Robotics Deployment: TorchScript & ONNX Export
+### 8. Autonomous A* Drive Path Planning Simulation
+Compute collision-free waypoint trajectories over neural terrain costmaps avoiding sand dunes and boulder fields:
+```bash
+python scripts/simulate_drive.py --image sample_images/test_mixed_terrain.jpg --output-dir outputs/
+```
+
+---
+
+### 9. Production FastAPI REST Microservice
+Launch a high-performance REST microservice with automated Swagger API documentation:
+```bash
+uvicorn api:app --host 0.0.0.0 --port 8000 --reload
+```
+Interactive API docs available at `http://localhost:8000/docs`.
+
+---
+
+### 10. Hardware Latency Profiler & Throughput Benchmark
+Benchmark DeepLabV3+ ResNet-50 inference speed across resolutions (256x256, 384x384, 512x512) measuring mean/P95 latencies and FPS throughput:
+```bash
+python scripts/benchmark_latency.py --iterations 30
+```
+
+---
+
+### 11. Edge Robotics Deployment: TorchScript & ONNX Export
 Export the DeepLabV3+ model for low-latency onboard robotic compute (NVIDIA Jetson, Edge TPU, ROS/ROS2 nodes):
 ```bash
 python scripts/export_onnx.py --checkpoint checkpoints/best_deeplabv3plus.pth --output-dir checkpoints/
@@ -204,7 +230,7 @@ python scripts/export_onnx.py --checkpoint checkpoints/best_deeplabv3plus.pth --
 
 ---
 
-### 9. Docker Deployment
+### 12. Docker Deployment
 Launch the entire system inside a containerized environment with zero dependency conflicts:
 ```bash
 docker compose up --build
@@ -213,8 +239,8 @@ Navigate to `http://localhost:7860` to access the Mission Control interface.
 
 ---
 
-### 10. Run Unit & Integration Tests
-Execute the comprehensive test suite verifying dataset loading, metric calculation, model architecture, and inference telemetry:
+### 13. Run Unit & Integration Tests
+Execute the comprehensive test suite verifying dataset loading, metric calculation, model architecture, inference telemetry, ROS 2 bridge, and FastAPI endpoints:
 ```bash
 python -m unittest discover -s tests
 ```
@@ -243,13 +269,19 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
 ├── Dockerfile                  # Multi-stage production container
 ├── docker-compose.yml          # Container orchestration (port 7860)
 ├── app.py                      # NASA JPL Mission Control Telemetry Dashboard (Gradio)
+├── api.py                      # Production FastAPI REST microservice
 ├── data/                       # Parquet datasets (train_shard0, test_min3, test_min1)
+├── docs/                       # Architectural documentation
+│   └── ARCHITECTURE.md         # Full system architecture specification
+├── CONTRIBUTING.md             # Developer contribution & style guidelines
 ├── figures/                    # Generated confusion matrices, overlays, error maps
 ├── notebooks/                  # Google Colab / Kaggle reproducible notebook
 ├── sample_images/              # 18 curated Mars rover testing images
 ├── scripts/                    # Utility & deployment scripts
 │   ├── predict.py              # Standalone CLI batch prediction & costmap generator
+│   ├── simulate_drive.py       # A* autonomous drive trajectory simulation
 │   ├── export_onnx.py          # TorchScript & ONNX edge export utility
+│   ├── benchmark_latency.py    # Hardware profiling and latency benchmark
 │   ├── download_data.py        # Dataset downloader
 │   ├── explore_data.py         # Exploratory data analysis & figure generator
 │   └── compute_weights_and_baseline.py
@@ -257,6 +289,8 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
 │   ├── dataset.py              # Exclusion masks, preprocessing, PyTorch Dataset
 │   ├── model.py                # DeepLabV3+ with ResNet-50 & Weighted CE Loss
 │   ├── inference.py            # Standalone MarsTerrainSegmenter & telemetry engine
+│   ├── path_planner.py         # 8-connected A* search & obstacle inflation
+│   ├── ros_bridge.py           # ROS 2 Nav2 OccupancyGrid serialization
 │   ├── metrics.py              # Confusion matrix, IoU per class, Pixel Accuracy
 │   ├── train.py                # Full training & validation loop
 │   ├── evaluate.py             # Evaluation on expert test splits
@@ -266,7 +300,9 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
     ├── test_dataset.py
     ├── test_metrics.py
     ├── test_model.py
-    └── test_inference.py
+    ├── test_inference.py
+    ├── test_ros_bridge.py
+    └── test_api.py
 ```
 
 ---

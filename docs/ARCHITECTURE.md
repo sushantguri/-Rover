@@ -85,3 +85,4 @@ $$\text{Cost}(p) = \text{TerrainWeight}(\text{Class}_p) \times \text{MovementDis
 | **2: Sand** | Loose sand dunes & ripples | **18.0** | Extreme penalty. Avoided unless no viable alternative exists. |
 | **3: Big Rock** | Boulders taller than 30 cm | **1000.0** | Lethal obstacle. Inflated by buffer radius to protect rover chassis. |
 | **255: Ignored** | Chassis / distant horizon | **1000.0** | Untraversable boundary. |
+

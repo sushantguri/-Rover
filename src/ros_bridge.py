@@ -83,3 +83,4 @@ class Ros2NavBridge:
             "big_rock_ratio": class_pcts.get("big rock", 0.0) / 100.0,
             "hazard_tripwire_triggered": class_pcts.get("sand", 0.0) > 25.0
         }
+

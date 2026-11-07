@@ -43,3 +43,4 @@ class TestRos2NavBridge(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
