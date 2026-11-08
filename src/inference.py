@@ -14,6 +14,8 @@ import torch
 from src.model import get_deeplabv3plus_model
 from src.dataset import CLASSES
 from src.visualization import create_overlay
+from src.terramechanics import RoverTerramechanicsEngine
+from src.uncertainty import UncertaintyEstimator
 
 # Costmap palette: Bedrock=Cyan/Blue, Soil=Green, Sand=Orange (Hazard), Big Rock=Red (Obstacle)
 COST_PALETTE = np.array([
@@ -49,6 +51,8 @@ class MarsTerrainSegmenter:
             self.has_weights = False
 
         self.model.eval()
+        self.terramechanics_engine = RoverTerramechanicsEngine()
+        self.uncertainty_estimator = UncertaintyEstimator()
         self.mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
         self.std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
 
@@ -97,6 +101,11 @@ class MarsTerrainSegmenter:
         cost_colored = COST_PALETTE[np.clip(pred_full, 0, 3)]
         costmap_overlay = (orig_np * (1.0 - opacity) + cost_colored * opacity).astype(np.uint8)
 
+        # Compute Epistemic Uncertainty & Heatmap
+        entropy_map = self.uncertainty_estimator.compute_entropy_map(logits)
+        overlay_uncertainty = self.uncertainty_estimator.generate_uncertainty_heatmap(orig_np, entropy_map, alpha=opacity)
+        uncertainty_telemetry = self.uncertainty_estimator.evaluate_uncertainty_telemetry(entropy_map)
+
         # Telemetry Analysis
         total_pixels = pred_full.size
         class_pcts = {}
@@ -110,6 +119,9 @@ class MarsTerrainSegmenter:
         rock_pct = class_pcts["big rock"]
         bedrock_pct = class_pcts["bedrock"]
         soil_pct = class_pcts["soil"]
+
+        # Terramechanics Physics Analysis
+        mechanics_telemetry = self.terramechanics_engine.evaluate_terrain_mechanics(class_pcts)
 
         # Traversability Index (0 to 100)
         traversability_index = float(bedrock_pct * 1.0 + soil_pct * 0.85 + sand_pct * 0.15 + rock_pct * 0.0)
@@ -143,7 +155,9 @@ class MarsTerrainSegmenter:
             "safety_status": safety_status,
             "autonomous_drive_action": drive_action,
             "recommended_speed_cm_s": recommended_speed_cm_s,
-            "wheel_slip_probability": slip_probability
+            "wheel_slip_probability": slip_probability,
+            "terramechanics": mechanics_telemetry,
+            "uncertainty": uncertainty_telemetry
         }
 
         return {
@@ -151,5 +165,6 @@ class MarsTerrainSegmenter:
             "overlay_multiclass": overlay_multiclass,
             "overlay_sand_hazard": overlay_sand_hazard,
             "overlay_costmap": costmap_overlay,
+            "overlay_uncertainty": overlay_uncertainty,
             "telemetry": telemetry
         }

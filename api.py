@@ -96,7 +96,8 @@ async def segment_terrain(
         response["overlays"] = {
             "multiclass_terrain": encode_image_base64(result["overlay_multiclass"]),
             "sand_hazard_radar": encode_image_base64(result["overlay_sand_hazard"]),
-            "traversability_costmap": encode_image_base64(result["overlay_costmap"])
+            "traversability_costmap": encode_image_base64(result["overlay_costmap"]),
+            "uncertainty_heatmap": encode_image_base64(result["overlay_uncertainty"])
         }
 
     return JSONResponse(content=response)

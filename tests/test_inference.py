@@ -21,7 +21,14 @@ class TestInferencePipeline(unittest.TestCase):
         result = self.segmenter.predict(dummy_img, img_size=128, sand_threshold=25.0)
 
         # 1. Check returned keys
-        expected_keys = {"prediction_mask", "overlay_multiclass", "overlay_sand_hazard", "overlay_costmap", "telemetry"}
+        expected_keys = {
+            "prediction_mask", 
+            "overlay_multiclass", 
+            "overlay_sand_hazard", 
+            "overlay_costmap", 
+            "overlay_uncertainty", 
+            "telemetry"
+        }
         self.assertTrue(expected_keys.issubset(result.keys()))
 
         # 2. Check shapes
@@ -29,6 +36,7 @@ class TestInferencePipeline(unittest.TestCase):
         self.assertEqual(result["overlay_multiclass"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_sand_hazard"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_costmap"].shape, (128, 128, 3))
+        self.assertEqual(result["overlay_uncertainty"].shape, (128, 128, 3))
 
         # 3. Check telemetry schema
         telemetry = result["telemetry"]
@@ -36,6 +44,8 @@ class TestInferencePipeline(unittest.TestCase):
         self.assertIn("safety_status", telemetry)
         self.assertIn("autonomous_drive_action", telemetry)
         self.assertIn("terrain_distribution_pct", telemetry)
+        self.assertIn("terramechanics", telemetry)
+        self.assertIn("uncertainty", telemetry)
 
         # 4. Check percentage sum adds to 100%
         pct_sum = sum(telemetry["terrain_distribution_pct"].values())
