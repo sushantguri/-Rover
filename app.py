@@ -15,6 +15,8 @@ from src.model import get_deeplabv3plus_model
 from src.dataset import CLASSES
 from src.visualization import create_overlay
 from src.path_planner import MarsPathPlanner
+from src.terramechanics import RoverTerramechanicsEngine
+from src.uncertainty import UncertaintyEstimator
 
 SAMPLE_DIR = "sample_images"
 curated_sample_paths = [
@@ -99,7 +101,7 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
             <div style="font-size: 13px; color: #64748b; margin-top: 4px;">Upload a Mars rover image or select a mission sample to initiate terrain telemetry.</div>
         </div>
         """
-        return None, None, None, None, None, empty_msg, ""
+        return None, None, None, None, None, None, empty_msg, ""
 
     t_start = time.time()
     model = load_inference_model()
@@ -147,6 +149,20 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
     planner = MarsPathPlanner(obstacle_inflation_radius=2)
     path_data = planner.plan_path(pred_np, planning_resolution=128)
     trajectory_view = planner.render_path_overlay(overlay_standard, path_data)
+
+    # 6. Epistemic Uncertainty & Prediction Entropy
+    uncertainty_engine = UncertaintyEstimator()
+    entropy_map = uncertainty_engine.compute_entropy_map(logits)
+    uncertainty_view = uncertainty_engine.generate_uncertainty_heatmap(orig_np, entropy_map, alpha=opacity)
+    uncertainty_telemetry = uncertainty_engine.evaluate_uncertainty_telemetry(entropy_map)
+
+    # Terramechanics Physics Modeling
+    mechanics_engine = RoverTerramechanicsEngine()
+    class_pcts_dict = {}
+    for c_id, c_name in enumerate(CLASSES):
+        px = int((pred_np == c_id).sum())
+        class_pcts_dict[c_name] = (px / total_pixels) * 100.0
+    mechanics = mechanics_engine.evaluate_terrain_mechanics(class_pcts_dict)
     
     # Metrics Computation
     total_pixels = pred_np.size
@@ -277,6 +293,33 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
             </div>
         </div>
 
+        <!-- Planetary Terramechanics Physics HUD -->
+        <div class="telemetry-card">
+            <div class="hud-header">BEKKER-WONG PLANETARY TERRAMECHANICS (CURIOSITY CLASS)</div>
+            <div class="hud-grid">
+                <div class="hud-item">
+                    <div class="hud-label">ESTIMATED WHEEL SINKAGE</div>
+                    <div class="hud-val" style="color: {'#ef4444' if mechanics['mean_wheel_sinkage_cm'] > 4.5 else '#f59e0b' if mechanics['mean_wheel_sinkage_cm'] > 2.0 else '#10b981'};">
+                        {mechanics['mean_wheel_sinkage_cm']:.1f} cm
+                    </div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">WHEEL SLIP ESTIMATE</div>
+                    <div class="hud-val" style="color: {'#ef4444' if mechanics['expected_wheel_slip_pct'] > 40.0 else '#f59e0b' if mechanics['expected_wheel_slip_pct'] > 15.0 else '#10b981'};">
+                        {mechanics['expected_wheel_slip_pct']:.1f}%
+                    </div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">MOTOR TORQUE DEMAND</div>
+                    <div class="hud-val">{mechanics['actuator_torque_demand_nm']:.1f} N·m / wheel</div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">PERCEPTION CONFIDENCE</div>
+                    <div class="hud-val" style="color: #38bdf8;">{100.0 - uncertainty_telemetry['high_uncertainty_pixel_pct']:.1f}% ({uncertainty_telemetry['confidence_status'].split('_')[0]})</div>
+                </div>
+            </div>
+        </div>
+
         <!-- Robot Drive Recommendations HUD -->
         <div class="telemetry-card">
             <div class="hud-header">RECOMMENDED AUTONOMOUS DRIVE PARAMETERS</div>
@@ -310,7 +353,7 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
 [UTC {now_utc}] [AUTONAV-PLANNER] Drive Command: {speed_rec} | Mode: {steering_mode}
 [UTC {now_utc}] [WATCHDOG] Ready for next frame capture."""
 
-    return overlay_standard, sand_hazard_view, costmap_view, side_by_side_view, trajectory_view, telemetry_html, flight_log
+    return overlay_standard, sand_hazard_view, costmap_view, side_by_side_view, trajectory_view, uncertainty_view, telemetry_html, flight_log
 
 
 # High-Tech NASA JPL Dark Glassmorphism CSS
@@ -711,6 +754,8 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
                     output_sbs = gr.Image(type="numpy", label="Original Rover Photo vs Segmented Classification", height=420)
                 with gr.TabItem("🚀 A* Autonomous Drive Path"):
                     output_path = gr.Image(type="numpy", label="Collision-Free A* Navigation Trajectory", height=420)
+                with gr.TabItem("🔮 Prediction Uncertainty Heatmap"):
+                    output_uncertainty = gr.Image(type="numpy", label="Epistemic Shannon Entropy Confidence Heatmap", height=420)
                     
             # Telemetry Metrics Dashboard
             stats_box = gr.HTML("""
@@ -754,7 +799,7 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
     submit_btn.click(
         fn=segment_mars_terrain,
         inputs=[input_image, opacity_slider, img_size_dropdown, sand_thresh_slider],
-        outputs=[output_overlay, output_sand, output_costmap, output_sbs, output_path, stats_box, flight_terminal]
+        outputs=[output_overlay, output_sand, output_costmap, output_sbs, output_path, output_uncertainty, stats_box, flight_terminal]
     )
 
 if __name__ == "__main__":
