@@ -176,9 +176,11 @@ Open `http://localhost:7860` in your browser to launch the **NASA JPL Mission Co
   - 🟥 **Big Rock:** Lethal obstacle (chassis collision hazard)
 - **↔️ Side-by-Side Dual View:** Direct split comparison of raw camera frame vs model overlay with laser divider.
 - **🚀 A* Autonomous Drive Path:** Real-time $A^*$ trajectory planning avoiding sand dunes and rock obstacles with start/goal nodes.
+- **🔮 Prediction Uncertainty Heatmap:** Normalized Shannon entropy overlay identifying optical glare, boundary ambiguity, and shadowing artifacts.
 - **📊 Real-Time Telemetry HUD:**
   - Dynamic Drive Safety Status Banner (`🟢 DRIVE PERMITTED`, `🟡 CAUTION ADVISORY`, `🔴 EMERGENCY HALT & REPLAN`).
   - Traversability Confidence Index ($0 - 100$).
+  - Bekker-Wong Terramechanics Meters: Wheel sinkage (cm), slip ratio (%), and actuator motor torque demand (N·m).
   - 4 Progress Meters with exact percentage breakdown and pixel counts.
   - Recommended Speed, Wheel Slip Estimate, and Steering Action.
 - **💻 Flight Computer Console:** Monospace terminal displaying live simulated timestamped perception logs.
@@ -197,7 +199,15 @@ python scripts/predict.py --input sample_images/ --output-dir outputs/ --resolut
 
 ---
 
-### 8. Autonomous A* Drive Path Planning Simulation
+### 8. Sequential Drive Stream Processor & Animated HUD
+Process continuous drive sequences, simulate AutoNav traversal, and compile an animated telemetry HUD (GIF):
+```bash
+python scripts/process_drive_sequence.py --input-dir sample_images/ --output-dir outputs/drive_sequence/ --fps 2
+```
+
+---
+
+### 9. Autonomous A* Drive Path Planning Simulation
 Compute collision-free waypoint trajectories over neural terrain costmaps avoiding sand dunes and boulder fields:
 ```bash
 python scripts/simulate_drive.py --image sample_images/test_mixed_terrain.jpg --output-dir outputs/
@@ -205,7 +215,7 @@ python scripts/simulate_drive.py --image sample_images/test_mixed_terrain.jpg --
 
 ---
 
-### 9. Production FastAPI REST Microservice
+### 10. Production FastAPI REST Microservice
 Launch a high-performance REST microservice with automated Swagger API documentation:
 ```bash
 uvicorn api:app --host 0.0.0.0 --port 8000 --reload
@@ -214,7 +224,7 @@ Interactive API docs available at `http://localhost:8000/docs`.
 
 ---
 
-### 10. Hardware Latency Profiler & Throughput Benchmark
+### 11. Hardware Latency Profiler & Throughput Benchmark
 Benchmark DeepLabV3+ ResNet-50 inference speed across resolutions (256x256, 384x384, 512x512) measuring mean/P95 latencies and FPS throughput:
 ```bash
 python scripts/benchmark_latency.py --iterations 30
@@ -222,7 +232,7 @@ python scripts/benchmark_latency.py --iterations 30
 
 ---
 
-### 11. Edge Robotics Deployment: TorchScript & ONNX Export
+### 12. Edge Robotics Deployment: TorchScript & ONNX Export
 Export the DeepLabV3+ model for low-latency onboard robotic compute (NVIDIA Jetson, Edge TPU, ROS/ROS2 nodes):
 ```bash
 python scripts/export_onnx.py --checkpoint checkpoints/best_deeplabv3plus.pth --output-dir checkpoints/
@@ -230,7 +240,7 @@ python scripts/export_onnx.py --checkpoint checkpoints/best_deeplabv3plus.pth --
 
 ---
 
-### 12. Docker Deployment
+### 13. Docker Deployment
 Launch the entire system inside a containerized environment with zero dependency conflicts:
 ```bash
 docker compose up --build
@@ -239,8 +249,8 @@ Navigate to `http://localhost:7860` to access the Mission Control interface.
 
 ---
 
-### 13. Run Unit & Integration Tests
-Execute the comprehensive test suite verifying dataset loading, metric calculation, model architecture, inference telemetry, ROS 2 bridge, and FastAPI endpoints:
+### 14. Run Unit & Integration Tests
+Execute the comprehensive test suite verifying dataset loading, metric calculation, model architecture, inference telemetry, terramechanics, uncertainty estimation, ROS 2 bridge, and FastAPI endpoints:
 ```bash
 python -m unittest discover -s tests
 ```
@@ -280,6 +290,7 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
 ├── scripts/                    # Utility & deployment scripts
 │   ├── predict.py              # Standalone CLI batch prediction & costmap generator
 │   ├── simulate_drive.py       # A* autonomous drive trajectory simulation
+│   ├── process_drive_sequence.py # Sequential drive processor & animated HUD generator
 │   ├── export_onnx.py          # TorchScript & ONNX edge export utility
 │   ├── benchmark_latency.py    # Hardware profiling and latency benchmark
 │   ├── download_data.py        # Dataset downloader
@@ -289,6 +300,8 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
 │   ├── dataset.py              # Exclusion masks, preprocessing, PyTorch Dataset
 │   ├── model.py                # DeepLabV3+ with ResNet-50 & Weighted CE Loss
 │   ├── inference.py            # Standalone MarsTerrainSegmenter & telemetry engine
+│   ├── terramechanics.py       # Bekker-Wong wheel sinkage & drawbar pull model
+│   ├── uncertainty.py          # Shannon entropy & epistemic confidence estimation
 │   ├── path_planner.py         # 8-connected A* search & obstacle inflation
 │   ├── ros_bridge.py           # ROS 2 Nav2 OccupancyGrid serialization
 │   ├── metrics.py              # Confusion matrix, IoU per class, Pixel Accuracy
@@ -301,6 +314,8 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
     ├── test_metrics.py
     ├── test_model.py
     ├── test_inference.py
+    ├── test_terramechanics.py
+    ├── test_uncertainty.py
     ├── test_ros_bridge.py
     └── test_api.py
 ```
