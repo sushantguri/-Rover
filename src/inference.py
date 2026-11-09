@@ -16,6 +16,8 @@ from src.dataset import CLASSES
 from src.visualization import create_overlay
 from src.terramechanics import RoverTerramechanicsEngine
 from src.uncertainty import UncertaintyEstimator
+from src.tta import TestTimeAugmenter
+from src.power_budget import RoverPowerBudgetEstimator
 
 # Costmap palette: Bedrock=Cyan/Blue, Soil=Green, Sand=Orange (Hazard), Big Rock=Red (Obstacle)
 COST_PALETTE = np.array([
@@ -53,6 +55,7 @@ class MarsTerrainSegmenter:
         self.model.eval()
         self.terramechanics_engine = RoverTerramechanicsEngine()
         self.uncertainty_estimator = UncertaintyEstimator()
+        self.power_estimator = RoverPowerBudgetEstimator()
         self.mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
         self.std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
 
@@ -61,7 +64,9 @@ class MarsTerrainSegmenter:
         image_input: Image.Image | np.ndarray | str, 
         img_size: int = 512,
         sand_threshold: float = 25.0,
-        opacity: float = 0.60
+        opacity: float = 0.60,
+        use_tta: bool = False,
+        tta_mode: str = "fast"
     ) -> Dict[str, Any]:
         """
         Runs full terrain perception, generates visualizations, and computes drive telemetry.
@@ -84,9 +89,13 @@ class MarsTerrainSegmenter:
         normalized = (arr - self.mean) / self.std
         tensor = torch.from_numpy(normalized).permute(2, 0, 1).unsqueeze(0).to(self.device)
 
-        # Forward pass
+        # Forward pass (Single Pass or Multi-View TTA Ensemble)
         with torch.no_grad():
-            logits = self.model(tensor)
+            if use_tta:
+                tta = TestTimeAugmenter(self.model, mode=tta_mode)
+                logits = tta.predict_pseudo_logits(tensor)
+            else:
+                logits = self.model(tensor)
             pred_map = torch.argmax(logits, dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
 
         # Scale prediction back to original dimensions
@@ -144,9 +153,17 @@ class MarsTerrainSegmenter:
             recommended_speed_cm_s = 4.5
             slip_probability = "LOW (< 5%)"
 
+        # MMRTG Power Budget Modeling
+        power_telemetry = self.power_estimator.estimate_traverse_energy(
+            terramechanics_data=mechanics_telemetry,
+            commanded_speed_cm_s=recommended_speed_cm_s,
+            planned_distance_m=20.0
+        )
+
         telemetry = {
             "image_dimensions": {"width": orig_w, "height": orig_h},
             "inference_resolution": img_size,
+            "tta_mode": tta_mode if use_tta else "disabled",
             "inference_latency_ms": round(latency_ms, 2),
             "device": str(self.device),
             "terrain_distribution_pct": class_pcts,
@@ -157,6 +174,7 @@ class MarsTerrainSegmenter:
             "recommended_speed_cm_s": recommended_speed_cm_s,
             "wheel_slip_probability": slip_probability,
             "terramechanics": mechanics_telemetry,
+            "power_budget": power_telemetry,
             "uncertainty": uncertainty_telemetry
         }
 

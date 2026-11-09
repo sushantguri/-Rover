@@ -77,6 +77,7 @@ async def segment_terrain(
     file: UploadFile = File(...),
     resolution: int = Query(512, ge=256, le=1024, description="Inference resolution"),
     sand_threshold: float = Query(25.0, ge=5.0, le=50.0, description="Sand emergency halt threshold (%)"),
+    use_tta: bool = Query(False, description="Enable multi-view Test-Time Augmentation ensemble"),
     include_base64_overlays: bool = Query(False, description="Whether to include base64-encoded JPEG overlays")
 ):
     try:
@@ -86,7 +87,7 @@ async def segment_terrain(
         raise HTTPException(status_code=400, detail=f"Invalid image format: {e}")
 
     segmenter = get_segmenter()
-    result = segmenter.predict(image, img_size=resolution, sand_threshold=sand_threshold)
+    result = segmenter.predict(image, img_size=resolution, sand_threshold=sand_threshold, use_tta=use_tta)
 
     response = {
         "telemetry": result["telemetry"]

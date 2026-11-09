@@ -26,6 +26,7 @@ def main():
     parser.add_argument("--resolution", "-r", type=int, default=512, help="Inference image resolution")
     parser.add_argument("--sand-threshold", type=float, default=25.0, help="Sand threshold for emergency halt alert (%)")
     parser.add_argument("--opacity", type=float, default=0.60, help="Overlay opacity")
+    parser.add_argument("--tta", action="store_true", help="Enable Test-Time Augmentation ensemble")
     parser.add_argument("--device", type=str, default=None, help="Compute device (mps, cuda, cpu)")
     args = parser.parse_args()
 
@@ -54,7 +55,8 @@ def main():
             image_input=img_path,
             img_size=args.resolution,
             sand_threshold=args.sand_threshold,
-            opacity=args.opacity
+            opacity=args.opacity,
+            use_tta=args.tta
         )
 
         telemetry = res["telemetry"]
