@@ -6,6 +6,7 @@ import os
 import glob
 import time
 import datetime
+import tempfile
 import numpy as np
 from PIL import Image
 import torch
@@ -17,6 +18,9 @@ from src.visualization import create_overlay
 from src.path_planner import MarsPathPlanner
 from src.terramechanics import RoverTerramechanicsEngine
 from src.uncertainty import UncertaintyEstimator
+from src.tta import TestTimeAugmenter
+from src.power_budget import RoverPowerBudgetEstimator
+from src.report_generator import MissionReportGenerator
 
 SAMPLE_DIR = "sample_images"
 curated_sample_paths = [
@@ -89,9 +93,10 @@ def make_side_by_side_comparison(orig_np, overlay_np):
     return np.hstack([orig_np, divider, overlay_np])
 
 
-def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_threshold=25.0):
+def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_threshold=25.0, tta_mode="disabled", sol_number=4118):
     """
-    High-fidelity inference pipeline with multi-view outputs and telemetry metrics.
+    High-fidelity inference pipeline with multi-view outputs, TTA ensemble,
+    Bekker-Wong terramechanics, MMRTG power budget telemetry, and HTML field reports.
     """
     if input_image is None:
         empty_msg = """
@@ -101,7 +106,7 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
             <div style="font-size: 13px; color: #64748b; margin-top: 4px;">Upload a Mars rover image or select a mission sample to initiate terrain telemetry.</div>
         </div>
         """
-        return None, None, None, None, None, None, empty_msg, ""
+        return None, None, None, None, None, None, empty_msg, "", None
 
     t_start = time.time()
     model = load_inference_model()
@@ -121,9 +126,13 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
     
     img_tensor = torch.from_numpy(normalized).permute(2, 0, 1).unsqueeze(0).to(device)
     
-    # Model Inference
+    # Model Inference (Single-Pass or Multi-View Test-Time Augmentation)
     with torch.no_grad():
-        logits = model(img_tensor)
+        if tta_mode in ("fast", "full"):
+            tta_engine = TestTimeAugmenter(model, mode=tta_mode)
+            logits = tta_engine.predict_pseudo_logits(img_tensor)
+        else:
+            logits = model(img_tensor)
         pred_map = torch.argmax(logits, dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
         
     # Resize prediction back to original dimensions using NEAREST interpolation
@@ -156,14 +165,6 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
     uncertainty_view = uncertainty_engine.generate_uncertainty_heatmap(orig_np, entropy_map, alpha=opacity)
     uncertainty_telemetry = uncertainty_engine.evaluate_uncertainty_telemetry(entropy_map)
 
-    # Terramechanics Physics Modeling
-    mechanics_engine = RoverTerramechanicsEngine()
-    class_pcts_dict = {}
-    for c_id, c_name in enumerate(CLASSES):
-        px = int((pred_np == c_id).sum())
-        class_pcts_dict[c_name] = (px / total_pixels) * 100.0
-    mechanics = mechanics_engine.evaluate_terrain_mechanics(class_pcts_dict)
-    
     # Metrics Computation
     total_pixels = pred_np.size
     class_pcts = {}
@@ -172,6 +173,10 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
         px = int((pred_np == c_id).sum())
         class_pixel_counts[c_name] = px
         class_pcts[c_name] = (px / total_pixels) * 100.0
+
+    # Terramechanics Physics Modeling
+    mechanics_engine = RoverTerramechanicsEngine()
+    mechanics = mechanics_engine.evaluate_terrain_mechanics(class_pcts)
 
     sand_pct = class_pcts["sand"]
     rock_pct = class_pcts["big rock"]
@@ -184,32 +189,49 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
     
     # Autonomous Driving Decision Engine
     if sand_pct >= float(sand_threshold):
+        safety_status_code = "CRITICAL_HAZARD"
+        drive_action_code = "EMERGENCY_HALT_AND_REPLAN"
         status_title = "CRITICAL WHEEL ENTRAPMENT HAZARD"
         status_desc = f"Dense sand dunes cover <strong>{sand_pct:.1f}%</strong> of forward frame (safety threshold: {sand_threshold}%). High risk of catastrophic wheel sinkage matching Spirit rover entrapment (Troy, 2009). Autonomous traverse halted; route replan triggered."
         status_theme = "critical"
         status_color = "#ef4444"
         badge_text = "🔴 EMERGENCY HALT & REPLAN"
         speed_rec = "0.0 cm/s (HALTED)"
+        recommended_speed_val = 0.0
         slip_risk = "HIGH RISK (85% - 95%)"
         steering_mode = "REVERSE & ARC EVASION"
     elif sand_pct > 8.0 or rock_pct > 2.0:
+        safety_status_code = "CAUTION_ADVISORY"
+        drive_action_code = "SLOW_CREEP_AND_AVOID"
         status_title = "CAUTION: MODERATE TERRAIN HAZARDS"
         status_desc = f"Scattered sand drifts (<strong>{sand_pct:.1f}%</strong>) or boulder obstacles (<strong>{rock_pct:.1f}%</strong>) detected. Autonomous speed throttled. Engage differential-drive slow creep and activate wheel slip feedback sensors."
         status_theme = "caution"
         status_color = "#f59e0b"
         badge_text = "🟡 CAUTION ADVISORY (SLOW CREEP)"
         speed_rec = "1.8 cm/s (THROTTLED)"
+        recommended_speed_val = 1.8
         slip_risk = "MODERATE (25% - 40%)"
         steering_mode = "OBSTACLE DETOUR ARC"
     else:
+        safety_status_code = "NOMINAL_SAFE"
+        drive_action_code = "PROCEED_NOMINAL_SPEED"
         status_title = "TRAVERSE PERMITTED: NOMINAL DRIVE"
         status_desc = f"Firm rock pavement (<strong>{bedrock_pct:.1f}%</strong>) and compact regolith (<strong>{soil_pct:.1f}%</strong>) dominate the forward terrain. Forward path clear for nominal waypoint traverse."
         status_theme = "nominal"
         status_color = "#10b981"
         badge_text = "🟢 DRIVE PERMITTED (NOMINAL)"
         speed_rec = "4.5 cm/s (NOMINAL CRUISE)"
+        recommended_speed_val = 4.5
         slip_risk = "LOW (< 5%)"
         steering_mode = "NOMINAL WAYPOINT TRAVERSE"
+
+    # MMRTG Power Budget & Mobility Energy Consumption
+    power_estimator = RoverPowerBudgetEstimator()
+    power_budget = power_estimator.estimate_traverse_energy(
+        terramechanics_data=mechanics,
+        commanded_speed_cm_s=recommended_speed_val,
+        planned_distance_m=20.0
+    )
 
     # HTML Telemetry Dashboard
     now_utc = datetime.datetime.now(datetime.timezone.utc).strftime("%H:%M:%S UTC")
@@ -338,22 +360,77 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
                 </div>
                 <div class="hud-item">
                     <div class="hud-label">INFERENCE LATENCY</div>
-                    <div class="hud-val">{latency_ms:.1f} ms ({device_name.split()[0]})</div>
+                    <div class="hud-val">{latency_ms:.1f} ms ({device_name.split()[0]}{' • TTA:' + tta_mode.upper() if tta_mode in ('fast', 'full') else ''})</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- MMRTG Power Budget & Mobility Energy Telemetry -->
+        <div class="telemetry-card">
+            <div class="hud-header">MMRTG POWER BUDGET & MOBILITY ENERGY ESTIMATE (SOL {int(sol_number)})</div>
+            <div class="hud-grid">
+                <div class="hud-item">
+                    <div class="hud-label">SPECIFIC ENERGY COST</div>
+                    <div class="hud-val" style="color: {'#ef4444' if power_budget['energy_cost_wh_per_m'] > 3.0 else '#f59e0b' if power_budget['energy_cost_wh_per_m'] > 1.2 else '#10b981'};">
+                        {power_budget['energy_cost_wh_per_m']:.2f} Wh/m
+                    </div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">20M TRAVERSE DRAW</div>
+                    <div class="hud-val">{power_budget['traverse_20m_energy_wh']:.1f} Wh ({power_budget['battery_impact_pct']:.2f}%)</div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">EFFECTIVE GROUND SPEED</div>
+                    <div class="hud-val">{power_budget['effective_ground_speed_cm_s']:.2f} cm/s</div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">POWER SUBSYSTEM STATE</div>
+                    <div class="hud-val" style="color: {'#ef4444' if power_budget['thermal_motor_warning'] else '#f59e0b' if power_budget['power_status'] == 'NET_BATTERY_DISCHARGE' else '#10b981' if power_budget['power_status'] == 'RTG_SUSTAINABLE_DRIVE' else '#94a3b8'};">
+                        {power_budget['power_status'].replace('_', ' ')}
+                    </div>
                 </div>
             </div>
         </div>
     </div>
     """
 
+    # Compile Downloadable Self-Contained Sol Drive Engineering Field Report
+    report_telemetry = {
+        "tta_mode": tta_mode,
+        "inference_latency_ms": round(latency_ms, 2),
+        "device": device,
+        "safety_status": safety_status_code,
+        "traversability_index": round(traversability, 1),
+        "autonomous_drive_action": drive_action_code,
+        "recommended_speed_cm_s": recommended_speed_val,
+        "terrain_distribution_pct": class_pcts,
+        "terramechanics": mechanics,
+        "power_budget": power_budget,
+        "uncertainty": uncertainty_telemetry,
+    }
+    report_gen = MissionReportGenerator()
+    report_html = report_gen.generate_html_report(
+        telemetry=report_telemetry,
+        orig_img_np=orig_np,
+        overlay_multiclass=overlay_standard,
+        overlay_sand=sand_hazard_view,
+        overlay_path=trajectory_view,
+        path_data=path_data,
+        sol_number=int(sol_number),
+    )
+    report_path = os.path.join(tempfile.gettempdir(), f"nasa_sol_{int(sol_number)}_field_report.html")
+    with open(report_path, "w", encoding="utf-8") as rf:
+        rf.write(report_html)
+
     # Monospace Robot Flight Log
-    flight_log = f"""[UTC {now_utc}] [AUTONAV-AI] Ingestion: {orig_w}x{orig_h} frame -> Resized to {img_size}x{img_size}
+    flight_log = f"""[UTC {now_utc}] [AUTONAV-AI] Ingestion: {orig_w}x{orig_h} frame -> Resized to {img_size}x{img_size} (TTA: {tta_mode})
 [UTC {now_utc}] [INFERENCE] DeepLabV3+ ResNet-50 executed in {latency_ms:.1f}ms on {device_name}
 [UTC {now_utc}] [TELEMETRY] Terrain: Bedrock={bedrock_pct:.1f}%, Soil={soil_pct:.1f}%, Sand={sand_pct:.1f}%, BigRock={rock_pct:.1f}%
 [UTC {now_utc}] [EVALUATION] Traversability Index: {traversability:.1f}/100.0 | Status: {status_title}
-[UTC {now_utc}] [AUTONAV-PLANNER] Drive Command: {speed_rec} | Mode: {steering_mode}
-[UTC {now_utc}] [WATCHDOG] Ready for next frame capture."""
+[UTC {now_utc}] [POWER-MMRTG] {power_budget['power_status']} | 20m Energy={power_budget['traverse_20m_energy_wh']:.1f}Wh | EffSpeed={power_budget['effective_ground_speed_cm_s']:.2f}cm/s
+[UTC {now_utc}] [AUTONAV-PLANNER] Drive Command: {speed_rec} | Mode: {steering_mode} | Sol {int(sol_number)} Report Ready."""
 
-    return overlay_standard, sand_hazard_view, costmap_view, side_by_side_view, trajectory_view, uncertainty_view, telemetry_html, flight_log
+    return overlay_standard, sand_hazard_view, costmap_view, side_by_side_view, trajectory_view, uncertainty_view, telemetry_html, flight_log, report_path
 
 
 # High-Tech NASA JPL Dark Glassmorphism CSS
@@ -725,6 +802,20 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
                     label="Sand Entrapment Tripwire Threshold (%)",
                     info="Triggers emergency halt if sand exceeds this ratio (Spirit trap prevention)"
                 )
+
+                with gr.Row():
+                    tta_mode_dropdown = gr.Dropdown(
+                        choices=["disabled", "fast", "full"],
+                        value="disabled",
+                        label="Multi-View TTA Ensemble",
+                        info="disabled: 1-pass | fast: +H-Flip (2x) | full: +Shadow/Glare (4x)"
+                    )
+                    sol_number_input = gr.Number(
+                        value=4118,
+                        precision=0,
+                        label="Mars Mission Sol #",
+                        info="Tagged in telemetry & downloadable field report"
+                    )
                 
             submit_btn = gr.Button(
                 "🛰️ ANALYZE TERRAIN & COMPUTE TRAVERSABILITY", 
@@ -766,6 +857,11 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
             </div>
             """)
 
+            report_download = gr.File(
+                label="📄 Download Sol Drive Engineering Field Report (HTML)",
+                interactive=False
+            )
+
     # BOTTOM ROW: Monospace Autonomous Telemetry Console
     with gr.Row():
         with gr.Column():
@@ -798,8 +894,8 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
     # Interactive Event Binding
     submit_btn.click(
         fn=segment_mars_terrain,
-        inputs=[input_image, opacity_slider, img_size_dropdown, sand_thresh_slider],
-        outputs=[output_overlay, output_sand, output_costmap, output_sbs, output_path, output_uncertainty, stats_box, flight_terminal]
+        inputs=[input_image, opacity_slider, img_size_dropdown, sand_thresh_slider, tta_mode_dropdown, sol_number_input],
+        outputs=[output_overlay, output_sand, output_costmap, output_sbs, output_path, output_uncertainty, stats_box, flight_terminal, report_download]
     )
 
 if __name__ == "__main__":
