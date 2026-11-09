@@ -181,6 +181,9 @@ Open `http://localhost:7860` in your browser to launch the **NASA JPL Mission Co
   - Dynamic Drive Safety Status Banner (`🟢 DRIVE PERMITTED`, `🟡 CAUTION ADVISORY`, `🔴 EMERGENCY HALT & REPLAN`).
   - Traversability Confidence Index ($0 - 100$).
   - Bekker-Wong Terramechanics Meters: Wheel sinkage (cm), slip ratio (%), and actuator motor torque demand (N·m).
+  - **MMRTG Power Budget & Energy Estimator:** Specific energy draw (Wh/m), slip-adjusted ground speed (cm/s), and 20m traverse battery draw (%).
+  - **Multi-View Test-Time Augmentation (TTA):** Toggleable `fast` (2-view) and `full` (4-view geometric + photometric glare/shadow) ensembling.
+  - **Downloadable Sol Drive Engineering Report:** One-click printable self-contained HTML field report.
   - 4 Progress Meters with exact percentage breakdown and pixel counts.
   - Recommended Speed, Wheel Slip Estimate, and Steering Action.
 - **💻 Flight Computer Console:** Monospace terminal displaying live simulated timestamped perception logs.
@@ -193,13 +196,21 @@ Run inference and generate terrain overlays + JSON drive telemetry directly from
 # Predict on a single image
 python scripts/predict.py --input sample_images/test_rocky_terrain.jpg --output-dir outputs/
 
-# Batch predict on an entire folder
-python scripts/predict.py --input sample_images/ --output-dir outputs/ --resolution 512
+# High-precision inference using Test-Time Augmentation (--tta)
+python scripts/predict.py --input sample_images/ --output-dir outputs/ --resolution 512 --tta
 ```
 
 ---
 
-### 8. Sequential Drive Stream Processor & Animated HUD
+### 8. Automated Sol Drive Engineering Field Report Generator
+Compile complete terrain overlays, $A^*$ drive paths, Bekker-Wong terramechanics, MMRTG power budgets, and epistemic uncertainty audits into a self-contained HTML engineering report:
+```bash
+python scripts/generate_mission_report.py --image sample_images/test_mixed_terrain.jpg --output outputs/sol_4118_report.html --sol 4118 --tta
+```
+
+---
+
+### 9. Sequential Drive Stream Processor & Animated HUD
 Process continuous drive sequences, simulate AutoNav traversal, and compile an animated telemetry HUD (GIF):
 ```bash
 python scripts/process_drive_sequence.py --input-dir sample_images/ --output-dir outputs/drive_sequence/ --fps 2
@@ -207,7 +218,7 @@ python scripts/process_drive_sequence.py --input-dir sample_images/ --output-dir
 
 ---
 
-### 9. Autonomous A* Drive Path Planning Simulation
+### 10. Autonomous A* Drive Path Planning Simulation
 Compute collision-free waypoint trajectories over neural terrain costmaps avoiding sand dunes and boulder fields:
 ```bash
 python scripts/simulate_drive.py --image sample_images/test_mixed_terrain.jpg --output-dir outputs/
@@ -215,8 +226,8 @@ python scripts/simulate_drive.py --image sample_images/test_mixed_terrain.jpg --
 
 ---
 
-### 10. Production FastAPI REST Microservice
-Launch a high-performance REST microservice with automated Swagger API documentation:
+### 11. Production FastAPI REST Microservice
+Launch a high-performance REST microservice with automated Swagger API documentation (supports `?use_tta=true` on `/v1/segment`):
 ```bash
 uvicorn api:app --host 0.0.0.0 --port 8000 --reload
 ```
@@ -224,15 +235,19 @@ Interactive API docs available at `http://localhost:8000/docs`.
 
 ---
 
-### 11. Hardware Latency Profiler & Throughput Benchmark
-Benchmark DeepLabV3+ ResNet-50 inference speed across resolutions (256x256, 384x384, 512x512) measuring mean/P95 latencies and FPS throughput:
+### 12. Hardware Latency & TTA Ablation Benchmarks
+Benchmark DeepLabV3+ ResNet-50 inference speed across resolutions (256x256, 384x384, 512x512) and quantify single-pass vs. TTA ensemble mIoU/latency trade-offs:
 ```bash
+# Hardware latency profiler
 python scripts/benchmark_latency.py --iterations 30
+
+# Single-pass vs TTA evaluation
+python scripts/eval_tta.py --split test_min3 --mode fast --max-samples 50
 ```
 
 ---
 
-### 12. Edge Robotics Deployment: TorchScript & ONNX Export
+### 13. Edge Robotics Deployment: TorchScript & ONNX Export
 Export the DeepLabV3+ model for low-latency onboard robotic compute (NVIDIA Jetson, Edge TPU, ROS/ROS2 nodes):
 ```bash
 python scripts/export_onnx.py --checkpoint checkpoints/best_deeplabv3plus.pth --output-dir checkpoints/
@@ -240,7 +255,7 @@ python scripts/export_onnx.py --checkpoint checkpoints/best_deeplabv3plus.pth --
 
 ---
 
-### 13. Docker Deployment
+### 14. Docker Deployment
 Launch the entire system inside a containerized environment with zero dependency conflicts:
 ```bash
 docker compose up --build
@@ -249,8 +264,8 @@ Navigate to `http://localhost:7860` to access the Mission Control interface.
 
 ---
 
-### 14. Run Unit & Integration Tests
-Execute the comprehensive test suite verifying dataset loading, metric calculation, model architecture, inference telemetry, terramechanics, uncertainty estimation, ROS 2 bridge, and FastAPI endpoints:
+### 15. Run Unit & Integration Tests
+Execute the comprehensive test suite verifying dataset loading, metric calculation, model architecture, TTA ensemble, inference telemetry, terramechanics, MMRTG power budgets, uncertainty estimation, HTML mission reports, ROS 2 bridge, and FastAPI endpoints:
 ```bash
 python -m unittest discover -s tests
 ```
@@ -289,19 +304,24 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
 ├── sample_images/              # 18 curated Mars rover testing images
 ├── scripts/                    # Utility & deployment scripts
 │   ├── predict.py              # Standalone CLI batch prediction & costmap generator
+│   ├── generate_mission_report.py # Sol Drive Engineering HTML field report CLI
 │   ├── simulate_drive.py       # A* autonomous drive trajectory simulation
 │   ├── process_drive_sequence.py # Sequential drive processor & animated HUD generator
 │   ├── export_onnx.py          # TorchScript & ONNX edge export utility
 │   ├── benchmark_latency.py    # Hardware profiling and latency benchmark
+│   ├── eval_tta.py             # Single-pass vs TTA ensemble ablation benchmark
 │   ├── download_data.py        # Dataset downloader
 │   ├── explore_data.py         # Exploratory data analysis & figure generator
 │   └── compute_weights_and_baseline.py
 ├── src/                        # Core Python library
 │   ├── dataset.py              # Exclusion masks, preprocessing, PyTorch Dataset
 │   ├── model.py                # DeepLabV3+ with ResNet-50 & Weighted CE Loss
+│   ├── tta.py                  # Multi-view Test-Time Augmentation ensemble engine
 │   ├── inference.py            # Standalone MarsTerrainSegmenter & telemetry engine
 │   ├── terramechanics.py       # Bekker-Wong wheel sinkage & drawbar pull model
+│   ├── power_budget.py         # MMRTG power budget & wheel-slip energy estimator
 │   ├── uncertainty.py          # Shannon entropy & epistemic confidence estimation
+│   ├── report_generator.py     # Standalone HTML Sol Drive engineering report compiler
 │   ├── path_planner.py         # 8-connected A* search & obstacle inflation
 │   ├── ros_bridge.py           # ROS 2 Nav2 OccupancyGrid serialization
 │   ├── metrics.py              # Confusion matrix, IoU per class, Pixel Accuracy
@@ -313,9 +333,12 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
     ├── test_dataset.py
     ├── test_metrics.py
     ├── test_model.py
+    ├── test_tta.py
     ├── test_inference.py
     ├── test_terramechanics.py
+    ├── test_power_budget.py
     ├── test_uncertainty.py
+    ├── test_report_generator.py
     ├── test_ros_bridge.py
     └── test_api.py
 ```
