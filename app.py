@@ -21,6 +21,9 @@ from src.uncertainty import UncertaintyEstimator
 from src.tta import TestTimeAugmenter
 from src.power_budget import RoverPowerBudgetEstimator
 from src.report_generator import MissionReportGenerator
+from src.geometry_risk import TerrainGeometryAnalyzer
+from src.kinematics import RoverKinematicPlanner
+from src.science_targets import AEGISTargetSelector
 
 SAMPLE_DIR = "sample_images"
 curated_sample_paths = [
@@ -106,7 +109,7 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
             <div style="font-size: 13px; color: #64748b; margin-top: 4px;">Upload a Mars rover image or select a mission sample to initiate terrain telemetry.</div>
         </div>
         """
-        return None, None, None, None, None, None, empty_msg, "", None
+        return None, None, None, None, None, None, None, None, empty_msg, "", None
 
     t_start = time.time()
     model = load_inference_model()
@@ -232,6 +235,33 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
         commanded_speed_cm_s=recommended_speed_val,
         planned_distance_m=20.0
     )
+
+    # 7. Horizon Range-Zone & Boulder Geometry High-Centering Radar
+    geometry_analyzer = TerrainGeometryAnalyzer()
+    geometry_risk = geometry_analyzer.analyze(pred_np)
+    zone_radar_view = geometry_analyzer.render_zone_radar_overlay(orig_np, pred_np, geometry_risk, alpha=opacity)
+
+    # 8. Steering Kinematics & Trajectory Smoothing Profile
+    kin_planner = RoverKinematicPlanner()
+    kinematics = kin_planner.profile_trajectory(
+        path_data=path_data,
+        image_shape=pred_np.shape,
+        effective_speed_cm_s=power_budget["effective_ground_speed_cm_s"],
+        pred_mask=pred_np
+    )
+
+    # 9. AEGIS Autonomous Geological Science Target Prioritizer
+    science_selector = AEGISTargetSelector(top_k=3)
+    science_targets = science_selector.select_targets(pred_np, entropy_map=entropy_map, top_k=3)
+    science_targets_view = science_selector.render_target_reticles(orig_np, science_targets)
+
+    targets_list_html = "".join(
+        f"<div style='display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:11.5px;'>"
+        f"<span style='color:#e2e8f0;font-weight:700;'>#{t['rank']} {t['category'].replace('_', ' ')}</span>"
+        f"<span style='color:#38bdf8;font-family:JetBrains Mono,monospace;'>{t['priority_score']} pts • {t['approach_safety'].replace('_', ' ')}</span>"
+        f"</div>"
+        for t in science_targets.get("targets", [])
+    ) or "<div style='font-size:11.5px;color:#64748b;'>No exposed bedrock/rock targets locked in current optical frame.</div>"
 
     # HTML Telemetry Dashboard
     now_utc = datetime.datetime.now(datetime.timezone.utc).strftime("%H:%M:%S UTC")
@@ -391,6 +421,37 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
                 </div>
             </div>
         </div>
+
+        <!-- Range-Zone Geometry & Autonomous Steering Kinematics -->
+        <div class="telemetry-card">
+            <div class="hud-header">HORIZON ZONES, BOULDER RISK & STEERING KINEMATICS</div>
+            <div class="hud-grid">
+                <div class="hud-item">
+                    <div class="hud-label">NEAR-FIELD (0-5M) SAND / ROCK</div>
+                    <div class="hud-val">{geometry_risk['nearfield_sand_pct']:.1f}% / {geometry_risk['nearfield_big_rock_pct']:.1f}%</div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">BELLY HIGH-CENTERING RISK</div>
+                    <div class="hud-val" style="color: {'#ef4444' if geometry_risk['high_centering_risk'] == 'CRITICAL' else '#f59e0b' if geometry_risk['high_centering_risk'] == 'ELEVATED' else '#10b981'};">
+                        {geometry_risk['high_centering_risk']} ({geometry_risk['boulder_cluster_count']} clusters)
+                    </div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">STEERING ARC MANEUVER</div>
+                    <div class="hud-val">{kinematics['steering_maneuver'].replace('_', ' ')} ({kinematics['initial_heading_deg']:+.1f}°)</div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">PROJECTED TRAVERSE ARC</div>
+                    <div class="hud-val">{kinematics['estimated_distance_m']:.1f} m / {kinematics['estimated_drive_time_s']:.0f} s</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- AEGIS Autonomous Geological Science Targets -->
+        <div class="telemetry-card">
+            <div class="hud-header">AEGIS AUTONOMOUS GEOLOGICAL TARGET QUEUE ({science_targets['aegis_status'].replace('_', ' ')})</div>
+            {targets_list_html}
+        </div>
     </div>
     """
 
@@ -407,6 +468,9 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
         "terramechanics": mechanics,
         "power_budget": power_budget,
         "uncertainty": uncertainty_telemetry,
+        "geometry_risk": geometry_risk,
+        "kinematics": kinematics,
+        "science_targets": science_targets,
     }
     report_gen = MissionReportGenerator()
     report_html = report_gen.generate_html_report(
@@ -417,6 +481,8 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
         overlay_path=trajectory_view,
         path_data=path_data,
         sol_number=int(sol_number),
+        overlay_zone_radar=zone_radar_view,
+        overlay_science=science_targets_view,
     )
     report_path = os.path.join(tempfile.gettempdir(), f"nasa_sol_{int(sol_number)}_field_report.html")
     with open(report_path, "w", encoding="utf-8") as rf:
@@ -426,11 +492,13 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
     flight_log = f"""[UTC {now_utc}] [AUTONAV-AI] Ingestion: {orig_w}x{orig_h} frame -> Resized to {img_size}x{img_size} (TTA: {tta_mode})
 [UTC {now_utc}] [INFERENCE] DeepLabV3+ ResNet-50 executed in {latency_ms:.1f}ms on {device_name}
 [UTC {now_utc}] [TELEMETRY] Terrain: Bedrock={bedrock_pct:.1f}%, Soil={soil_pct:.1f}%, Sand={sand_pct:.1f}%, BigRock={rock_pct:.1f}%
-[UTC {now_utc}] [EVALUATION] Traversability Index: {traversability:.1f}/100.0 | Status: {status_title}
+[UTC {now_utc}] [GEOMETRY] NearField Sand={geometry_risk['nearfield_sand_pct']:.1f}% | Clusters={geometry_risk['boulder_cluster_count']} | HighCenterRisk={geometry_risk['high_centering_risk']}
+[UTC {now_utc}] [KINEMATICS] Maneuver={kinematics['steering_maneuver']} ({kinematics['initial_heading_deg']:+.1f} deg) | Arc={kinematics['estimated_distance_m']:.1f}m
+[UTC {now_utc}] [AEGIS-SCI] Status={science_targets['aegis_status']} | Targets Locked={science_targets['target_count']}
 [UTC {now_utc}] [POWER-MMRTG] {power_budget['power_status']} | 20m Energy={power_budget['traverse_20m_energy_wh']:.1f}Wh | EffSpeed={power_budget['effective_ground_speed_cm_s']:.2f}cm/s
 [UTC {now_utc}] [AUTONAV-PLANNER] Drive Command: {speed_rec} | Mode: {steering_mode} | Sol {int(sol_number)} Report Ready."""
 
-    return overlay_standard, sand_hazard_view, costmap_view, side_by_side_view, trajectory_view, uncertainty_view, telemetry_html, flight_log, report_path
+    return overlay_standard, sand_hazard_view, costmap_view, side_by_side_view, trajectory_view, uncertainty_view, zone_radar_view, science_targets_view, telemetry_html, flight_log, report_path
 
 
 # High-Tech NASA JPL Dark Glassmorphism CSS
@@ -847,6 +915,10 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
                     output_path = gr.Image(type="numpy", label="Collision-Free A* Navigation Trajectory", height=420)
                 with gr.TabItem("🔮 Prediction Uncertainty Heatmap"):
                     output_uncertainty = gr.Image(type="numpy", label="Epistemic Shannon Entropy Confidence Heatmap", height=420)
+                with gr.TabItem("📡 Near-Field Zone Radar"):
+                    output_zone_radar = gr.Image(type="numpy", label="0-5m Near-Field Hazard & Boulder Cluster Radar", height=420)
+                with gr.TabItem("🎯 AEGIS Science Targets"):
+                    output_science = gr.Image(type="numpy", label="Autonomous ChemCam / Mastcam Science Target Reticles", height=420)
                     
             # Telemetry Metrics Dashboard
             stats_box = gr.HTML("""
@@ -895,7 +967,7 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
     submit_btn.click(
         fn=segment_mars_terrain,
         inputs=[input_image, opacity_slider, img_size_dropdown, sand_thresh_slider, tta_mode_dropdown, sol_number_input],
-        outputs=[output_overlay, output_sand, output_costmap, output_sbs, output_path, output_uncertainty, stats_box, flight_terminal, report_download]
+        outputs=[output_overlay, output_sand, output_costmap, output_sbs, output_path, output_uncertainty, output_zone_radar, output_science, stats_box, flight_terminal, report_download]
     )
 
 if __name__ == "__main__":
