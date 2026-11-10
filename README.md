@@ -177,10 +177,13 @@ Open `http://localhost:7860` in your browser to launch the **NASA JPL Mission Co
 - **↔️ Side-by-Side Dual View:** Direct split comparison of raw camera frame vs model overlay with laser divider.
 - **🚀 A* Autonomous Drive Path:** Real-time $A^*$ trajectory planning avoiding sand dunes and rock obstacles with start/goal nodes.
 - **🔮 Prediction Uncertainty Heatmap:** Normalized Shannon entropy overlay identifying optical glare, boundary ambiguity, and shadowing artifacts.
+- **📡 Near-Field Zone Radar:** Separates Navcam depth zones into Immediate (0–5 m), Mid-Range (5–15 m), and Horizon (15–30 m), with connected-component boulder cluster boxes and chassis high-centering risk alerts.
+- **🎯 AEGIS Science Targets:** Autonomous Mastcam/ChemCam geological target prioritizer ranking exposed bedrock outcrops, stratigraphic boundaries, and safe float rocks with optical targeting reticles.
 - **📊 Real-Time Telemetry HUD:**
   - Dynamic Drive Safety Status Banner (`🟢 DRIVE PERMITTED`, `🟡 CAUTION ADVISORY`, `🔴 EMERGENCY HALT & REPLAN`).
   - Traversability Confidence Index ($0 - 100$).
   - Bekker-Wong Terramechanics Meters: Wheel sinkage (cm), slip ratio (%), and actuator motor torque demand (N·m).
+  - **Steering Kinematics Profiler:** Ramer-Douglas-Peucker trajectory smoothing, initial Ackermann steering maneuver, turn angles, and estimated traverse duration.
   - **MMRTG Power Budget & Energy Estimator:** Specific energy draw (Wh/m), slip-adjusted ground speed (cm/s), and 20m traverse battery draw (%).
   - **Multi-View Test-Time Augmentation (TTA):** Toggleable `fast` (2-view) and `full` (4-view geometric + photometric glare/shadow) ensembling.
   - **Downloadable Sol Drive Engineering Report:** One-click printable self-contained HTML field report.
@@ -226,8 +229,16 @@ python scripts/simulate_drive.py --image sample_images/test_mixed_terrain.jpg --
 
 ---
 
-### 11. Production FastAPI REST Microservice
-Launch a high-performance REST microservice with automated Swagger API documentation (supports `?use_tta=true` on `/v1/segment`):
+### 11. Batch Mission Fleet Audit CLI
+Batch-audit all camera frames in a directory and export traversability, near-field risk, steering maneuvers, MMRTG energy, and top AEGIS science targets to CSV & JSON:
+```bash
+python scripts/batch_mission_audit.py --input-dir sample_images/ --output-dir outputs/mission_audit/
+```
+
+---
+
+### 12. Production FastAPI REST Microservice
+Launch a high-performance REST microservice with automated Swagger API documentation (supports `?use_tta=true` on `/v1/segment`, steering kinematics on `/v1/plan`, and autonomous geological targeting on `/v1/science-targets`):
 ```bash
 uvicorn api:app --host 0.0.0.0 --port 8000 --reload
 ```
@@ -235,7 +246,7 @@ Interactive API docs available at `http://localhost:8000/docs`.
 
 ---
 
-### 12. Hardware Latency & TTA Ablation Benchmarks
+### 13. Hardware Latency & TTA Ablation Benchmarks
 Benchmark DeepLabV3+ ResNet-50 inference speed across resolutions (256x256, 384x384, 512x512) and quantify single-pass vs. TTA ensemble mIoU/latency trade-offs:
 ```bash
 # Hardware latency profiler
@@ -247,7 +258,7 @@ python scripts/eval_tta.py --split test_min3 --mode fast --max-samples 50
 
 ---
 
-### 13. Edge Robotics Deployment: TorchScript & ONNX Export
+### 14. Edge Robotics Deployment: TorchScript & ONNX Export
 Export the DeepLabV3+ model for low-latency onboard robotic compute (NVIDIA Jetson, Edge TPU, ROS/ROS2 nodes):
 ```bash
 python scripts/export_onnx.py --checkpoint checkpoints/best_deeplabv3plus.pth --output-dir checkpoints/
@@ -255,7 +266,7 @@ python scripts/export_onnx.py --checkpoint checkpoints/best_deeplabv3plus.pth --
 
 ---
 
-### 14. Docker Deployment
+### 15. Docker Deployment
 Launch the entire system inside a containerized environment with zero dependency conflicts:
 ```bash
 docker compose up --build
@@ -264,8 +275,8 @@ Navigate to `http://localhost:7860` to access the Mission Control interface.
 
 ---
 
-### 15. Run Unit & Integration Tests
-Execute the comprehensive test suite verifying dataset loading, metric calculation, model architecture, TTA ensemble, inference telemetry, terramechanics, MMRTG power budgets, uncertainty estimation, HTML mission reports, ROS 2 bridge, and FastAPI endpoints:
+### 16. Run Unit & Integration Tests
+Execute the comprehensive test suite verifying dataset loading, metric calculation, model architecture, TTA ensemble, inference telemetry, horizon geometry risk, steering kinematics, AEGIS science targeting, terramechanics, MMRTG power budgets, uncertainty estimation, HTML mission reports, ROS 2 bridge, and FastAPI endpoints:
 ```bash
 python -m unittest discover -s tests
 ```
@@ -305,6 +316,7 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
 ├── scripts/                    # Utility & deployment scripts
 │   ├── predict.py              # Standalone CLI batch prediction & costmap generator
 │   ├── generate_mission_report.py # Sol Drive Engineering HTML field report CLI
+│   ├── batch_mission_audit.py  # Fleet-wide CSV & JSON perception/kinematics/AEGIS audit
 │   ├── simulate_drive.py       # A* autonomous drive trajectory simulation
 │   ├── process_drive_sequence.py # Sequential drive processor & animated HUD generator
 │   ├── export_onnx.py          # TorchScript & ONNX edge export utility
@@ -318,6 +330,9 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
 │   ├── model.py                # DeepLabV3+ with ResNet-50 & Weighted CE Loss
 │   ├── tta.py                  # Multi-view Test-Time Augmentation ensemble engine
 │   ├── inference.py            # Standalone MarsTerrainSegmenter & telemetry engine
+│   ├── geometry_risk.py        # Perspective range-zone radar & boulder high-centering risk
+│   ├── kinematics.py           # Ramer-Douglas-Peucker smoothing & steering kinematics
+│   ├── science_targets.py      # NASA AEGIS geological science target prioritizer
 │   ├── terramechanics.py       # Bekker-Wong wheel sinkage & drawbar pull model
 │   ├── power_budget.py         # MMRTG power budget & wheel-slip energy estimator
 │   ├── uncertainty.py          # Shannon entropy & epistemic confidence estimation
@@ -335,6 +350,10 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
     ├── test_model.py
     ├── test_tta.py
     ├── test_inference.py
+    ├── test_geometry_risk.py
+    ├── test_kinematics.py
+    ├── test_path_planner.py
+    ├── test_science_targets.py
     ├── test_terramechanics.py
     ├── test_power_budget.py
     ├── test_uncertainty.py
