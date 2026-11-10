@@ -13,6 +13,7 @@ from PIL import Image
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.inference import MarsTerrainSegmenter
 from src.path_planner import MarsPathPlanner
+from src.kinematics import RoverKinematicPlanner
 from src.report_generator import MissionReportGenerator
 
 
@@ -34,10 +35,19 @@ def main():
     segmenter = MarsTerrainSegmenter()
     res = segmenter.predict(orig_img, img_size=512, use_tta=args.tta)
 
-    print("3. Computing A* obstacle-avoidance path...")
+    print("3. Computing A* obstacle-avoidance path & steering kinematics...")
     planner = MarsPathPlanner(obstacle_inflation_radius=2)
     path_data = planner.plan_path(res["prediction_mask"], planning_resolution=128)
     path_overlay = planner.render_path_overlay(res["overlay_multiclass"], path_data)
+
+    kin_planner = RoverKinematicPlanner()
+    eff_speed = res["telemetry"]["power_budget"]["effective_ground_speed_cm_s"]
+    res["telemetry"]["kinematics"] = kin_planner.profile_trajectory(
+        path_data,
+        image_shape=res["prediction_mask"].shape,
+        effective_speed_cm_s=eff_speed,
+        pred_mask=res["prediction_mask"],
+    )
 
     print("4. Compiling HTML Field Report...")
     generator = MissionReportGenerator()
@@ -48,7 +58,9 @@ def main():
         overlay_sand=res["overlay_sand_hazard"],
         overlay_path=path_overlay,
         path_data=path_data,
-        sol_number=args.sol
+        sol_number=args.sol,
+        overlay_zone_radar=res["overlay_zone_radar"],
+        overlay_science=res["overlay_science_targets"],
     )
 
     with open(args.output, "w", encoding="utf-8") as f:
