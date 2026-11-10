@@ -27,6 +27,8 @@ class TestInferencePipeline(unittest.TestCase):
             "overlay_sand_hazard", 
             "overlay_costmap", 
             "overlay_uncertainty", 
+            "overlay_zone_radar",
+            "overlay_science_targets",
             "telemetry"
         }
         self.assertTrue(expected_keys.issubset(result.keys()))
@@ -37,6 +39,8 @@ class TestInferencePipeline(unittest.TestCase):
         self.assertEqual(result["overlay_sand_hazard"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_costmap"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_uncertainty"].shape, (128, 128, 3))
+        self.assertEqual(result["overlay_zone_radar"].shape, (128, 128, 3))
+        self.assertEqual(result["overlay_science_targets"].shape, (128, 128, 3))
 
         # 3. Check telemetry schema
         telemetry = result["telemetry"]
@@ -47,6 +51,8 @@ class TestInferencePipeline(unittest.TestCase):
         self.assertIn("terramechanics", telemetry)
         self.assertIn("power_budget", telemetry)
         self.assertIn("uncertainty", telemetry)
+        self.assertIn("geometry_risk", telemetry)
+        self.assertIn("science_targets", telemetry)
 
         # 4. Check percentage sum adds to 100%
         pct_sum = sum(telemetry["terrain_distribution_pct"].values())

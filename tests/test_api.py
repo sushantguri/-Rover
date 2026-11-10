@@ -40,8 +40,34 @@ class TestFastApiEndpoints(unittest.TestCase):
         self.assertIn("telemetry", data)
         self.assertIn("overlays", data)
         self.assertIn("multiclass_terrain", data["overlays"])
+        self.assertIn("zone_radar", data["overlays"])
+        self.assertIn("science_targets", data["overlays"])
         self.assertIn("traversability_index", data["telemetry"])
+        self.assertIn("geometry_risk", data["telemetry"])
         self.assertEqual(data["telemetry"]["tta_mode"], "disabled")
+
+    def test_plan_and_science_targets_endpoints(self):
+        """Verifies /v1/plan returns kinematic profile and /v1/science-targets returns AEGIS targets."""
+        img = Image.fromarray(np.random.randint(50, 200, (64, 64, 3), dtype=np.uint8))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+        buf.seek(0)
+
+        plan_resp = self.client.post("/v1/plan?planning_resolution=64", files={"file": ("plan.jpg", buf, "image/jpeg")})
+        self.assertEqual(plan_resp.status_code, 200)
+        plan_json = plan_resp.json()
+        self.assertIn("kinematics", plan_json)
+        self.assertIn("steering_maneuver", plan_json["kinematics"])
+
+        buf.seek(0)
+        sci_resp = self.client.post(
+            "/v1/science-targets?resolution=256&include_base64_reticle=true",
+            files={"file": ("sci.jpg", buf, "image/jpeg")},
+        )
+        self.assertEqual(sci_resp.status_code, 200)
+        sci_json = sci_resp.json()
+        self.assertIn("aegis_targets", sci_json)
+        self.assertIn("target_reticle_overlay", sci_json)
 
     def test_segment_endpoint_with_tta(self):
         """Verifies /v1/segment enables TTA ensemble and reports power budget telemetry."""

@@ -49,6 +49,28 @@ class TestMissionReportGenerator(unittest.TestCase):
                 "high_uncertainty_pixel_pct": 3.5,
                 "perception_recommendation": "Full autonomous trust level.",
             },
+            "geometry_risk": {
+                "nearfield_sand_pct": 12.0,
+                "nearfield_big_rock_pct": 3.0,
+                "boulder_cluster_count": 2,
+                "high_centering_risk": "ELEVATED",
+            },
+            "kinematics": {
+                "steering_maneuver": "SLIGHT_LEFT_ARC",
+                "initial_heading_deg": -11.4,
+                "estimated_distance_m": 24.5,
+                "estimated_drive_time_s": 544.4,
+            },
+            "science_targets": {
+                "targets": [
+                    {
+                        "target_id": "AEGIS-TGT-1",
+                        "category": "BEDROCK_OUTCROP",
+                        "priority_score": 91.2,
+                        "approach_safety": "SAFE_ROVER_APPROACH",
+                    }
+                ]
+            },
         }
         path_data = {
             "status": "PATH_FOUND",
@@ -63,6 +85,8 @@ class TestMissionReportGenerator(unittest.TestCase):
             overlay_path=overlay_path,
             path_data=path_data,
             sol_number=4125,
+            overlay_zone_radar=orig,
+            overlay_science=orig,
         )
 
         self.assertIn("<!DOCTYPE html>", html)
@@ -71,6 +95,9 @@ class TestMissionReportGenerator(unittest.TestCase):
         self.assertIn("data:image/jpeg;base64,", html)
         self.assertIn("Terramechanics & Power Budget", html)
         self.assertIn("Epistemic Uncertainty Audit", html)
+        self.assertIn("Horizon Zones, Steering Kinematics & AEGIS Geological Targeting", html)
+        self.assertIn("AEGIS-TGT-1", html)
+        self.assertIn("SLIGHT_LEFT_ARC", html)
         self.assertIn("38.5 / 100.0", html)
         self.assertIn("84.0 Wh", html)
 

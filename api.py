@@ -15,16 +15,18 @@ import numpy as np
 
 from src.inference import MarsTerrainSegmenter
 from src.path_planner import MarsPathPlanner
+from src.kinematics import RoverKinematicPlanner
 
 app = FastAPI(
     title="NASA JPL Mars Rover AutoNav Perception API",
-    description="REST API for DeepLabV3+ Mars Rover Terrain Segmentation, Traversability Scoring, and A* Path Planning.",
-    version="2.0.0"
+    description="REST API for DeepLabV3+ Mars Rover Terrain Segmentation, Traversability Scoring, Steering Kinematics, AEGIS Science Targeting, and A* Path Planning.",
+    version="2.1.0"
 )
 
 # Global model instance
 _segmenter: Optional[MarsTerrainSegmenter] = None
 _planner: Optional[MarsPathPlanner] = None
+_kinematics: Optional[RoverKinematicPlanner] = None
 
 
 def get_segmenter() -> MarsTerrainSegmenter:
@@ -41,6 +43,13 @@ def get_planner() -> MarsPathPlanner:
     return _planner
 
 
+def get_kinematic_planner() -> RoverKinematicPlanner:
+    global _kinematics
+    if _kinematics is None:
+        _kinematics = RoverKinematicPlanner()
+    return _kinematics
+
+
 def encode_image_base64(img_array: np.ndarray) -> str:
     pil_img = Image.fromarray(img_array)
     buffer = io.BytesIO()
@@ -55,7 +64,7 @@ def root():
         "model": "DeepLabV3+ (ResNet-50)",
         "status": "ONLINE",
         "docs_url": "/docs",
-        "endpoints": ["/v1/segment", "/v1/plan", "/v1/classes"]
+        "endpoints": ["/v1/segment", "/v1/plan", "/v1/science-targets", "/v1/classes"]
     }
 
 
@@ -98,7 +107,9 @@ async def segment_terrain(
             "multiclass_terrain": encode_image_base64(result["overlay_multiclass"]),
             "sand_hazard_radar": encode_image_base64(result["overlay_sand_hazard"]),
             "traversability_costmap": encode_image_base64(result["overlay_costmap"]),
-            "uncertainty_heatmap": encode_image_base64(result["overlay_uncertainty"])
+            "uncertainty_heatmap": encode_image_base64(result["overlay_uncertainty"]),
+            "zone_radar": encode_image_base64(result["overlay_zone_radar"]),
+            "science_targets": encode_image_base64(result["overlay_science_targets"])
         }
 
     return JSONResponse(content=response)
@@ -123,18 +134,57 @@ async def plan_trajectory(
     planner = get_planner()
     plan_data = planner.plan_path(pred_mask, planning_resolution=planning_resolution)
 
+    kin_planner = get_kinematic_planner()
+    eff_speed = seg_res["telemetry"]["power_budget"]["effective_ground_speed_cm_s"]
+    kin_data = kin_planner.profile_trajectory(
+        plan_data,
+        image_shape=pred_mask.shape,
+        effective_speed_cm_s=eff_speed,
+        pred_mask=pred_mask
+    )
+
     response = {
         "status": plan_data["status"],
         "waypoint_count": plan_data["waypoint_count"],
         "total_path_cost": plan_data["total_path_cost"],
         "start_coordinate": list(plan_data["start"]),
         "goal_coordinate": list(plan_data["goal"]),
-        "waypoints": [list(pt) for pt in plan_data["waypoints"]]
+        "waypoints": [list(pt) for pt in plan_data["waypoints"]],
+        "kinematics": {
+            key: ([list(p) for p in val] if key == "smoothed_waypoints" else val)
+            for key, val in kin_data.items()
+        }
     }
 
     if include_base64_path:
         path_overlay = planner.render_path_overlay(seg_res["overlay_multiclass"], plan_data)
         response["trajectory_overlay"] = encode_image_base64(path_overlay)
+
+    return JSONResponse(content=response)
+
+
+@app.post("/v1/science-targets")
+async def extract_science_targets(
+    file: UploadFile = File(...),
+    resolution: int = Query(512, ge=256, le=1024, description="Inference resolution"),
+    include_base64_reticle: bool = Query(False, description="Include base64 optical targeting reticle overlay")
+):
+    """Autonomous NASA AEGIS-style geological science target identification endpoint."""
+    try:
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid image format: {e}")
+
+    segmenter = get_segmenter()
+    seg_res = segmenter.predict(image, img_size=resolution)
+
+    response: dict = {
+        "aegis_targets": seg_res["telemetry"]["science_targets"],
+        "geometry_risk": seg_res["telemetry"]["geometry_risk"],
+    }
+    if include_base64_reticle:
+        response["target_reticle_overlay"] = encode_image_base64(seg_res["overlay_science_targets"])
 
     return JSONResponse(content=response)
 

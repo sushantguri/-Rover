@@ -18,6 +18,8 @@ from src.terramechanics import RoverTerramechanicsEngine
 from src.uncertainty import UncertaintyEstimator
 from src.tta import TestTimeAugmenter
 from src.power_budget import RoverPowerBudgetEstimator
+from src.geometry_risk import TerrainGeometryAnalyzer
+from src.science_targets import AEGISTargetSelector
 
 # Costmap palette: Bedrock=Cyan/Blue, Soil=Green, Sand=Orange (Hazard), Big Rock=Red (Obstacle)
 COST_PALETTE = np.array([
@@ -56,6 +58,8 @@ class MarsTerrainSegmenter:
         self.terramechanics_engine = RoverTerramechanicsEngine()
         self.uncertainty_estimator = UncertaintyEstimator()
         self.power_estimator = RoverPowerBudgetEstimator()
+        self.geometry_analyzer = TerrainGeometryAnalyzer()
+        self.science_selector = AEGISTargetSelector(top_k=3)
         self.mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
         self.std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
 
@@ -114,6 +118,16 @@ class MarsTerrainSegmenter:
         entropy_map = self.uncertainty_estimator.compute_entropy_map(logits)
         overlay_uncertainty = self.uncertainty_estimator.generate_uncertainty_heatmap(orig_np, entropy_map, alpha=opacity)
         uncertainty_telemetry = self.uncertainty_estimator.evaluate_uncertainty_telemetry(entropy_map)
+
+        # Perspective Range-Zone & Boulder Geometry Risk Analysis
+        geometry_risk = self.geometry_analyzer.analyze(pred_full)
+        overlay_zone_radar = self.geometry_analyzer.render_zone_radar_overlay(
+            orig_np, pred_full, geometry_risk, alpha=opacity
+        )
+
+        # AEGIS Autonomous Geological Science Target Selection
+        science_targets = self.science_selector.select_targets(pred_full, entropy_map=entropy_map, top_k=3)
+        overlay_science_targets = self.science_selector.render_target_reticles(orig_np, science_targets)
 
         # Telemetry Analysis
         total_pixels = pred_full.size
@@ -175,7 +189,9 @@ class MarsTerrainSegmenter:
             "wheel_slip_probability": slip_probability,
             "terramechanics": mechanics_telemetry,
             "power_budget": power_telemetry,
-            "uncertainty": uncertainty_telemetry
+            "uncertainty": uncertainty_telemetry,
+            "geometry_risk": geometry_risk,
+            "science_targets": science_targets
         }
 
         return {
@@ -184,5 +200,7 @@ class MarsTerrainSegmenter:
             "overlay_sand_hazard": overlay_sand_hazard,
             "overlay_costmap": costmap_overlay,
             "overlay_uncertainty": overlay_uncertainty,
+            "overlay_zone_radar": overlay_zone_radar,
+            "overlay_science_targets": overlay_science_targets,
             "telemetry": telemetry
         }

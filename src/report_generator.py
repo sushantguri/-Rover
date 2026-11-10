@@ -33,7 +33,9 @@ class MissionReportGenerator:
         overlay_sand: np.ndarray,
         overlay_path: Optional[np.ndarray] = None,
         path_data: Optional[Dict[str, Any]] = None,
-        sol_number: int = 4118
+        sol_number: int = 4118,
+        overlay_zone_radar: Optional[np.ndarray] = None,
+        overlay_science: Optional[np.ndarray] = None
     ) -> str:
         """
         Compiles complete telemetry and imagery into a polished printable HTML report.
@@ -43,6 +45,9 @@ class MissionReportGenerator:
         mech = telemetry.get("terramechanics", {})
         uncert = telemetry.get("uncertainty", {})
         power = telemetry.get("power_budget", {})
+        geom = telemetry.get("geometry_risk", {})
+        kin = telemetry.get("kinematics", {})
+        sci = telemetry.get("science_targets", {})
 
         status = telemetry.get("safety_status", "UNKNOWN")
         if "CRITICAL" in status:
@@ -59,6 +64,49 @@ class MissionReportGenerator:
         b64_multi = _img_to_base64(overlay_multiclass)
         b64_sand = _img_to_base64(overlay_sand)
         b64_path = _img_to_base64(overlay_path) if overlay_path is not None else b64_multi
+
+        extra_img_html = ""
+        if overlay_zone_radar is not None or overlay_science is not None:
+            b64_radar = _img_to_base64(overlay_zone_radar) if overlay_zone_radar is not None else b64_multi
+            b64_sci = _img_to_base64(overlay_science) if overlay_science is not None else b64_orig
+            extra_img_html = f"""
+            <div class="img-box">
+                <img src="data:image/jpeg;base64,{b64_radar}" alt="Near-Field Zone Radar">
+                <div class="img-caption">E. Near-Field Zone & Boulder Risk Radar</div>
+            </div>
+            <div class="img-box">
+                <img src="data:image/jpeg;base64,{b64_sci}" alt="AEGIS Science Targets">
+                <div class="img-caption">F. AEGIS Autonomous Science Target Reticles</div>
+            </div>"""
+
+        advanced_section_html = ""
+        if geom or kin or sci:
+            targets_rows = "".join(
+                f"<tr><td>{t.get('target_id')}</td><td>{t.get('category')}</td>"
+                f"<td>{t.get('priority_score')}</td><td>{t.get('approach_safety')}</td></tr>"
+                for t in sci.get("targets", [])
+            ) or "<tr><td colspan='4'>No high-priority outcrop/rock targets detected.</td></tr>"
+            advanced_section_html = f"""
+        <h2>4. Horizon Zones, Steering Kinematics & AEGIS Geological Targeting</h2>
+        <div class="grid-2">
+            <div class="card">
+                <strong>Range-Zone Hazards & Steering Kinematics</strong>
+                <table>
+                    <tr><th>Subsystem Metric</th><th>Estimate</th></tr>
+                    <tr><td>Near-Field (0-5m) Sand / Rock</td><td>{geom.get('nearfield_sand_pct', 0.0)}% / {geom.get('nearfield_big_rock_pct', 0.0)}%</td></tr>
+                    <tr><td>Boulder Clusters / Centering Risk</td><td>{geom.get('boulder_cluster_count', 0)} clusters ({geom.get('high_centering_risk', 'N/A')})</td></tr>
+                    <tr><td>Steering Maneuver</td><td><strong>{kin.get('steering_maneuver', 'N/A')}</strong> ({kin.get('initial_heading_deg', 0.0)}°)</td></tr>
+                    <tr><td>Projected Traverse Time</td><td>{kin.get('estimated_distance_m', 0.0)} m in {kin.get('estimated_drive_time_s', 0.0)} s</td></tr>
+                </table>
+            </div>
+            <div class="card">
+                <strong>AEGIS Autonomous Science Priority Queue</strong>
+                <table>
+                    <tr><th>Target ID</th><th>Class</th><th>Score</th><th>Access</th></tr>
+                    {targets_rows}
+                </table>
+            </div>
+        </div>"""
 
         path_status = path_data.get("status", "N/A") if path_data else "N/A"
         path_cost = path_data.get("total_path_cost", "N/A") if path_data else "N/A"
@@ -209,7 +257,7 @@ class MissionReportGenerator:
             <div class="img-box">
                 <img src="data:image/jpeg;base64,{b64_path}" alt="A* Trajectory">
                 <div class="img-caption">D. Planned A* Drive Trajectory ({path_status})</div>
-            </div>
+            </div>{extra_img_html}
         </div>
 
         <h2>2. Terrain Distribution & Traversability Telemetry</h2>
@@ -262,6 +310,7 @@ class MissionReportGenerator:
                 </table>
             </div>
         </div>
+        {advanced_section_html}
 
         <div class="footer">
             Automated Robotics Perception Report • NASA AI4Mars Terrain Segmentation Framework • DeepLabV3+ ResNet-50
