@@ -19,6 +19,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from src.inference import MarsTerrainSegmenter
 from src.path_planner import MarsPathPlanner
 from src.terramechanics import RoverTerramechanicsEngine
+from src.power_budget import RoverPowerBudgetEstimator
+from src.kinematics import RoverKinematicPlanner
+from src.sol_simulator import SolMissionSimulator
 
 
 def draw_hud_overlay(frame_np: np.ndarray, telemetry: dict, mechanics: dict, frame_idx: int, total_frames: int) -> Image.Image:
@@ -101,9 +104,13 @@ def process_sequence(input_dir: str, output_dir: str, max_frames: int = 8, fps: 
     segmenter = MarsTerrainSegmenter()
     planner = MarsPathPlanner(obstacle_inflation_radius=2)
     mechanics_engine = RoverTerramechanicsEngine()
+    power_estimator = RoverPowerBudgetEstimator()
+    kin_planner = RoverKinematicPlanner()
+    sol_simulator = SolMissionSimulator()
 
     processed_frames: List[Image.Image] = []
     traverse_history: List[dict] = []
+    sim_steps: List[dict] = []
 
     for idx, img_path in enumerate(selected_files, 1):
         base_name = os.path.basename(img_path)
@@ -115,9 +122,21 @@ def process_sequence(input_dir: str, output_dir: str, max_frames: int = 8, fps: 
         dist = telemetry["terrain_distribution_pct"]
         mechanics = mechanics_engine.evaluate_terrain_mechanics(dist)
 
-        # 2. Path Planning trajectory
+        # 2. Path Planning trajectory & Steering Kinematics
         path_data = planner.plan_path(res["prediction_mask"], planning_resolution=128)
         trajectory_overlay = planner.render_path_overlay(res["overlay_multiclass"], path_data)
+        kinematics = kin_planner.profile_trajectory(
+            path_data,
+            image_shape=res["prediction_mask"].shape,
+            effective_speed_cm_s=telemetry["power_budget"]["effective_ground_speed_cm_s"],
+            pred_mask=res["prediction_mask"],
+        )
+        leg_dist = kinematics["estimated_distance_m"] if kinematics["estimated_distance_m"] > 0.5 else 15.0
+        power_budget = power_estimator.estimate_traverse_energy(
+            mechanics,
+            commanded_speed_cm_s=telemetry["recommended_speed_cm_s"],
+            planned_distance_m=leg_dist,
+        )
 
         # 3. Render HUD
         hud_frame = draw_hud_overlay(trajectory_overlay, telemetry, mechanics, idx, len(selected_files))
@@ -129,13 +148,26 @@ def process_sequence(input_dir: str, output_dir: str, max_frames: int = 8, fps: 
             "filename": base_name,
             "traversability_index": telemetry["traversability_index"],
             "safety_status": telemetry["safety_status"],
+            "sensor_health_status": telemetry["sensor_health"]["sensor_health_status"],
             "wheel_sinkage_cm": mechanics["mean_wheel_sinkage_cm"],
             "wheel_slip_pct": mechanics["expected_wheel_slip_pct"],
             "terrain_distribution": dist,
             "path_status": path_data["status"],
-            "total_path_cost": path_data["total_path_cost"]
+            "total_path_cost": path_data["total_path_cost"],
+            "steering_maneuver": kinematics["steering_maneuver"],
+            "estimated_distance_m": kinematics["estimated_distance_m"],
+            "power_status": power_budget["power_status"],
+            "energy_cost_wh_per_m": power_budget["energy_cost_wh_per_m"],
         }
         traverse_history.append(log_entry)
+        sim_steps.append({
+            "safety_status": telemetry["safety_status"],
+            "recommended_speed_cm_s": telemetry["recommended_speed_cm_s"],
+            "terramechanics": mechanics,
+            "power_budget": power_budget,
+            "kinematics": kinematics,
+            "science_targets": telemetry["science_targets"],
+        })
 
     # Compile Animated Drive GIF
     gif_path = os.path.join(output_dir, "mars_rover_drive_hud.gif")
@@ -159,6 +191,19 @@ def process_sequence(input_dir: str, output_dir: str, max_frames: int = 8, fps: 
     with open(json_path, "w") as f:
         json.dump(traverse_history, f, indent=2)
     print(f"  ✓ Saved Traverse Telemetry Log -> {json_path}")
+
+    # Run Multi-Waypoint Sol Battery SoC & Drift Simulation
+    sol_summary = sol_simulator.simulate_sol_traverse(sim_steps)
+    sim_path = os.path.join(output_dir, "sol_mission_summary.json")
+    with open(sim_path, "w") as f:
+        json.dump(sol_summary, f, indent=2)
+    print(f"  ✓ Saved Sol Mission SoC Simulation -> {sim_path}")
+    print(
+        f"  ✓ Sol Status: {sol_summary['mission_status']} | "
+        f"Distance={sol_summary['total_distance_m']:.1f}m | "
+        f"Final SoC={sol_summary['final_soc_pct']:.1f}% | "
+        f"Odometry Drift={sol_summary['estimated_odometry_drift_m']:.3f}m"
+    )
     print("\nDrive sequence compilation successfully completed!")
 
 
