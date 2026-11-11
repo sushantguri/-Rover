@@ -185,7 +185,8 @@ Open `http://localhost:7860` in your browser to launch the **NASA JPL Mission Co
   - Bekker-Wong Terramechanics Meters: Wheel sinkage (cm), slip ratio (%), and actuator motor torque demand (N·m).
   - **Steering Kinematics Profiler:** Ramer-Douglas-Peucker trajectory smoothing, initial Ackermann steering maneuver, turn angles, and estimated traverse duration.
   - **MMRTG Power Budget & Energy Estimator:** Specific energy draw (Wh/m), slip-adjusted ground speed (cm/s), and 20m traverse battery draw (%).
-  - **Multi-View Test-Time Augmentation (TTA):** Toggleable `fast` (2-view) and `full` (4-view geometric + photometric glare/shadow) ensembling.
+  - **Multi-View Test-Time Augmentation (TTA):** Toggleable `auto (watchdog)`, `fast` (2-view), and `full` (4-view geometric + photometric glare/shadow) ensembling.
+  - **Optical Sensor Watchdog:** Real-time frame health scoring (`NOMINAL_OPTICAL`, `GLARE_SATURATION_WARNING`, `ATMOSPHERIC_HAZE_ADVISORY`, `SENSOR_FAULT_DARK_FRAME`) with automatic TTA trigger recommendations.
   - **Downloadable Sol Drive Engineering Report:** One-click printable self-contained HTML field report.
   - 4 Progress Meters with exact percentage breakdown and pixel counts.
   - Recommended Speed, Wheel Slip Estimate, and Steering Action.
@@ -214,7 +215,7 @@ python scripts/generate_mission_report.py --image sample_images/test_mixed_terra
 ---
 
 ### 9. Sequential Drive Stream Processor & Animated HUD
-Process continuous drive sequences, simulate AutoNav traversal, and compile an animated telemetry HUD (GIF):
+Process continuous drive sequences, simulate multi-leg Sol MMRTG battery SoC & slip-induced odometry drift, and compile an animated telemetry HUD (GIF):
 ```bash
 python scripts/process_drive_sequence.py --input-dir sample_images/ --output-dir outputs/drive_sequence/ --fps 2
 ```
@@ -237,10 +238,13 @@ python scripts/batch_mission_audit.py --input-dir sample_images/ --output-dir ou
 
 ---
 
-### 12. Production FastAPI REST Microservice
-Launch a high-performance REST microservice with automated Swagger API documentation (supports `?use_tta=true` on `/v1/segment`, steering kinematics on `/v1/plan`, and autonomous geological targeting on `/v1/science-targets`):
+### 12. Production FastAPI REST Microservice & ROS 2 Nav2 Export
+Launch a high-performance REST microservice with automated Swagger API documentation (supports `?use_tta=true` & `?auto_tta=true` on `/v1/segment`, steering kinematics on `/v1/plan`, autonomous geological targeting on `/v1/science-targets`, and serialized ROS 2 packets on `/v1/ros2-packet`):
 ```bash
 uvicorn api:app --host 0.0.0.0 --port 8000 --reload
+
+# Or export standalone ROS 2 Nav2 / RViz2 JSON packet directly via CLI
+python scripts/export_ros_packet.py --image sample_images/test_mixed_terrain.jpg --output outputs/ros2_packet.json
 ```
 Interactive API docs available at `http://localhost:8000/docs`.
 
@@ -276,7 +280,7 @@ Navigate to `http://localhost:7860` to access the Mission Control interface.
 ---
 
 ### 16. Run Unit & Integration Tests
-Execute the comprehensive test suite verifying dataset loading, metric calculation, model architecture, TTA ensemble, inference telemetry, horizon geometry risk, steering kinematics, AEGIS science targeting, terramechanics, MMRTG power budgets, uncertainty estimation, HTML mission reports, ROS 2 bridge, and FastAPI endpoints:
+Execute the comprehensive test suite verifying dataset loading, metric calculation, model architecture, TTA ensemble, optical sensor watchdog, Sol SoC mission simulation, inference telemetry, horizon geometry risk, steering kinematics, AEGIS science targeting, terramechanics, MMRTG power budgets, uncertainty estimation, HTML mission reports, ROS 2 Nav2 bridge, and FastAPI endpoints:
 ```bash
 python -m unittest discover -s tests
 ```
@@ -318,7 +322,8 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
 │   ├── generate_mission_report.py # Sol Drive Engineering HTML field report CLI
 │   ├── batch_mission_audit.py  # Fleet-wide CSV & JSON perception/kinematics/AEGIS audit
 │   ├── simulate_drive.py       # A* autonomous drive trajectory simulation
-│   ├── process_drive_sequence.py # Sequential drive processor & animated HUD generator
+│   ├── process_drive_sequence.py # Sequential drive processor, HUD GIF & Sol SoC simulator
+│   ├── export_ros_packet.py    # ROS 2 Nav2 OccupancyGrid/Path/Twist/Markers JSON exporter
 │   ├── export_onnx.py          # TorchScript & ONNX edge export utility
 │   ├── benchmark_latency.py    # Hardware profiling and latency benchmark
 │   ├── eval_tta.py             # Single-pass vs TTA ensemble ablation benchmark
@@ -330,15 +335,17 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
 │   ├── model.py                # DeepLabV3+ with ResNet-50 & Weighted CE Loss
 │   ├── tta.py                  # Multi-view Test-Time Augmentation ensemble engine
 │   ├── inference.py            # Standalone MarsTerrainSegmenter & telemetry engine
+│   ├── sensor_watchdog.py      # Optical sensor health, glare/haze/dark fault diagnostics
 │   ├── geometry_risk.py        # Perspective range-zone radar & boulder high-centering risk
 │   ├── kinematics.py           # Ramer-Douglas-Peucker smoothing & steering kinematics
 │   ├── science_targets.py      # NASA AEGIS geological science target prioritizer
 │   ├── terramechanics.py       # Bekker-Wong wheel sinkage & drawbar pull model
 │   ├── power_budget.py         # MMRTG power budget & wheel-slip energy estimator
+│   ├── sol_simulator.py        # Multi-waypoint Sol battery SoC & odometry drift simulator
 │   ├── uncertainty.py          # Shannon entropy & epistemic confidence estimation
 │   ├── report_generator.py     # Standalone HTML Sol Drive engineering report compiler
 │   ├── path_planner.py         # 8-connected A* search & obstacle inflation
-│   ├── ros_bridge.py           # ROS 2 Nav2 OccupancyGrid serialization
+│   ├── ros_bridge.py           # ROS 2 Nav2 OccupancyGrid, Path, Twist & MarkerArray bridge
 │   ├── metrics.py              # Confusion matrix, IoU per class, Pixel Accuracy
 │   ├── train.py                # Full training & validation loop
 │   ├── evaluate.py             # Evaluation on expert test splits
@@ -349,6 +356,7 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
     ├── test_metrics.py
     ├── test_model.py
     ├── test_tta.py
+    ├── test_sensor_watchdog.py
     ├── test_inference.py
     ├── test_geometry_risk.py
     ├── test_kinematics.py
@@ -356,6 +364,7 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
     ├── test_science_targets.py
     ├── test_terramechanics.py
     ├── test_power_budget.py
+    ├── test_sol_simulator.py
     ├── test_uncertainty.py
     ├── test_report_generator.py
     ├── test_ros_bridge.py

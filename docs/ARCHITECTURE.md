@@ -49,7 +49,7 @@ flowchart TD
         SAFETY_ENGINE --> GRADIO["Mission Control Dashboard\n(Gradio UI - app.py)"]
         PATH_PLANNER --> GRADIO
         SAFETY_ENGINE --> REST["FastAPI Microservice\n(api.py)"]
-        COSTMAP --> ROS2["ROS 2 Nav2 Bridge\n(nav_msgs/OccupancyGrid)"]
+        COSTMAP --> ROS2["ROS 2 Nav2 Bridge\n(OccupancyGrid, Path, Twist, Markers)"]
         ARGMAX --> ONNX_CORE["Edge ONNX / TorchScript\n(Jetson / Edge TPU)"]
     end
 ```
@@ -64,15 +64,17 @@ flowchart TD
 | **Neural Backbone** | [`src/model.py`](../src/model.py) | DeepLabV3+ model creation with ResNet-50 encoder, weighted cross-entropy loss. |
 | **TTA Ensemble** | [`src/tta.py`](../src/tta.py) | Geometric & photometric multi-view Test-Time Augmentation probability averaging (`fast`/`full`). |
 | **Inference Engine** | [`src/inference.py`](../src/inference.py) | Standalone segmenter, overlay generator, density metrics, drive status rules. |
+| **Optical Watchdog** | [`src/sensor_watchdog.py`](../src/sensor_watchdog.py) | Optical frame glare, dust haze, blur, and dark-frame health diagnostics with TTA boost triggers. |
 | **Terramechanics Engine** | [`src/terramechanics.py`](../src/terramechanics.py) | Bekker-Wong wheel sinkage depth, slip ratio, and motor torque estimation. |
 | **Geometry Risk Radar** | [`src/geometry_risk.py`](../src/geometry_risk.py) | Perspective range-zone breakdown (0-5m/5-15m/15-30m), boulder clustering, and high-centering risk. |
 | **Steering Kinematics** | [`src/kinematics.py`](../src/kinematics.py) | Ramer-Douglas-Peucker trajectory simplification, Ackermann turn maneuvers, and drive durations. |
 | **AEGIS Science Targeting** | [`src/science_targets.py`](../src/science_targets.py) | Autonomous geological outcrop/contact target ranking and optical reticle rendering. |
 | **MMRTG Power Estimator** | [`src/power_budget.py`](../src/power_budget.py) | Continuous 110W RTG & Li-Ion battery mobility energy draw (`Wh/m`, thermal alerts). |
+| **Sol Mission Simulator** | [`src/sol_simulator.py`](../src/sol_simulator.py) | Multi-waypoint Sol Li-Ion battery SoC cycles, slip odometry drift, and hazard/low-battery aborts. |
 | **Uncertainty Estimator** | [`src/uncertainty.py`](../src/uncertainty.py) | Pixelwise Shannon entropy heatmaps and perception confidence auditing. |
 | **Field Report Generator** | [`src/report_generator.py`](../src/report_generator.py) | Self-contained HTML Sol Drive Engineering Field Report compiler. |
 | **A* Path Planner** | [`src/path_planner.py`](../src/path_planner.py) | 8-connected A* heuristic search, obstacle inflation, trajectory rendering. |
-| **ROS 2 Bridge** | [`src/ros_bridge.py`](../src/ros_bridge.py) | `nav_msgs/OccupancyGrid` serialization for ROS 2 Nav2 costmaps. |
+| **ROS 2 Bridge** | [`src/ros_bridge.py`](../src/ros_bridge.py) | `OccupancyGrid`, `Path`, `Twist`, and RViz2 `MarkerArray` payload serialization for ROS 2 Nav2. |
 | **Evaluation Suite** | [`src/evaluate.py`](../src/evaluate.py) | Benchmark evaluation against `test_min3` and `test_min1` consensus test sets. |
 | **Error Diagnostics** | [`src/error_analysis.py`](../src/error_analysis.py) | Sand-to-bedrock confusion analysis and diagnostic image generation. |
 | **Gradio Dashboard** | [`app.py`](../app.py) | NASA JPL Mission Control Telemetry HUD with TTA controls & report export. |
