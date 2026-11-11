@@ -24,6 +24,7 @@ from src.report_generator import MissionReportGenerator
 from src.geometry_risk import TerrainGeometryAnalyzer
 from src.kinematics import RoverKinematicPlanner
 from src.science_targets import AEGISTargetSelector
+from src.sensor_watchdog import OpticalSensorWatchdog
 
 SAMPLE_DIR = "sample_images"
 curated_sample_paths = [
@@ -118,7 +119,17 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
     orig_img = Image.fromarray(input_image).convert("RGB")
     orig_w, orig_h = orig_img.size
     orig_np = np.array(orig_img)
-    
+
+    # 0. Optical Sensor Health & Atmospheric Fault Diagnostics (Watchdog)
+    watchdog = OpticalSensorWatchdog()
+    sensor_health = watchdog.inspect_frame(orig_np)
+    if tta_mode == "auto (watchdog)":
+        run_tta = sensor_health["recommend_tta_boost"]
+        effective_tta_mode = "fast" if run_tta else "disabled"
+    else:
+        run_tta = tta_mode in ("fast", "full")
+        effective_tta_mode = tta_mode
+
     # Preprocessing
     resized_img = orig_img.resize((img_size, img_size), Image.BILINEAR)
     img_arr = np.array(resized_img, dtype=np.float32) / 255.0
@@ -131,8 +142,8 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
     
     # Model Inference (Single-Pass or Multi-View Test-Time Augmentation)
     with torch.no_grad():
-        if tta_mode in ("fast", "full"):
-            tta_engine = TestTimeAugmenter(model, mode=tta_mode)
+        if run_tta:
+            tta_engine = TestTimeAugmenter(model, mode=effective_tta_mode)
             logits = tta_engine.predict_pseudo_logits(img_tensor)
         else:
             logits = model(img_tensor)
@@ -390,7 +401,7 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
                 </div>
                 <div class="hud-item">
                     <div class="hud-label">INFERENCE LATENCY</div>
-                    <div class="hud-val">{latency_ms:.1f} ms ({device_name.split()[0]}{' • TTA:' + tta_mode.upper() if tta_mode in ('fast', 'full') else ''})</div>
+                    <div class="hud-val">{latency_ms:.1f} ms ({device_name.split()[0]}{' • TTA:' + effective_tta_mode.upper() if run_tta else ''})</div>
                 </div>
             </div>
         </div>
@@ -452,14 +463,40 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
             <div class="hud-header">AEGIS AUTONOMOUS GEOLOGICAL TARGET QUEUE ({science_targets['aegis_status'].replace('_', ' ')})</div>
             {targets_list_html}
         </div>
+
+        <!-- Optical Sensor Health & Watchdog Diagnostics -->
+        <div class="telemetry-card">
+            <div class="hud-header">OPTICAL SENSOR WATCHDOG & ATMOSPHERIC DIAGNOSTICS</div>
+            <div class="hud-grid">
+                <div class="hud-item">
+                    <div class="hud-label">SENSOR HEALTH STATE</div>
+                    <div class="hud-val" style="color: {'#ef4444' if 'FAULT' in sensor_health['sensor_health_status'] else '#f59e0b' if 'WARNING' in sensor_health['sensor_health_status'] or 'ADVISORY' in sensor_health['sensor_health_status'] else '#10b981'};">
+                        {sensor_health['sensor_health_status'].replace('_', ' ')}
+                    </div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">OPTICAL TRUST / LUMINANCE</div>
+                    <div class="hud-val">{sensor_health['optical_trust_score']:.0f}% (Lum {sensor_health['mean_luminance']:.0f})</div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">GLARE / SHADOW CLIPPING</div>
+                    <div class="hud-val">{sensor_health['overexposed_pct']:.1f}% / {sensor_health['underexposed_pct']:.1f}%</div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">SHARPNESS GRADIENT</div>
+                    <div class="hud-val">{sensor_health['sharpness_gradient']:.1f} (std {sensor_health['contrast_std']:.1f})</div>
+                </div>
+            </div>
+        </div>
     </div>
     """
 
     # Compile Downloadable Self-Contained Sol Drive Engineering Field Report
     report_telemetry = {
-        "tta_mode": tta_mode,
+        "tta_mode": effective_tta_mode,
         "inference_latency_ms": round(latency_ms, 2),
         "device": device,
+        "sensor_health": sensor_health,
         "safety_status": safety_status_code,
         "traversability_index": round(traversability, 1),
         "autonomous_drive_action": drive_action_code,
@@ -489,7 +526,9 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
         rf.write(report_html)
 
     # Monospace Robot Flight Log
-    flight_log = f"""[UTC {now_utc}] [AUTONAV-AI] Ingestion: {orig_w}x{orig_h} frame -> Resized to {img_size}x{img_size} (TTA: {tta_mode})
+    watchdog_flags = ",".join(sensor_health["active_fault_flags"]) or "NONE"
+    flight_log = f"""[UTC {now_utc}] [AUTONAV-AI] Ingestion: {orig_w}x{orig_h} frame -> Resized to {img_size}x{img_size} (TTA: {effective_tta_mode})
+[UTC {now_utc}] [WATCHDOG-OPT] Status={sensor_health['sensor_health_status']} | Trust={sensor_health['optical_trust_score']:.0f}% | Flags={watchdog_flags}
 [UTC {now_utc}] [INFERENCE] DeepLabV3+ ResNet-50 executed in {latency_ms:.1f}ms on {device_name}
 [UTC {now_utc}] [TELEMETRY] Terrain: Bedrock={bedrock_pct:.1f}%, Soil={soil_pct:.1f}%, Sand={sand_pct:.1f}%, BigRock={rock_pct:.1f}%
 [UTC {now_utc}] [GEOMETRY] NearField Sand={geometry_risk['nearfield_sand_pct']:.1f}% | Clusters={geometry_risk['boulder_cluster_count']} | HighCenterRisk={geometry_risk['high_centering_risk']}
@@ -873,10 +912,10 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
 
                 with gr.Row():
                     tta_mode_dropdown = gr.Dropdown(
-                        choices=["disabled", "fast", "full"],
+                        choices=["disabled", "auto (watchdog)", "fast", "full"],
                         value="disabled",
                         label="Multi-View TTA Ensemble",
-                        info="disabled: 1-pass | fast: +H-Flip (2x) | full: +Shadow/Glare (4x)"
+                        info="disabled | auto (watchdog-triggered) | fast (2x) | full (4x)"
                     )
                     sol_number_input = gr.Number(
                         value=4118,

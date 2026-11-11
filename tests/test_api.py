@@ -20,6 +20,7 @@ class TestFastApiEndpoints(unittest.TestCase):
         r_root = self.client.get("/")
         self.assertEqual(r_root.status_code, 200)
         self.assertEqual(r_root.json()["status"], "ONLINE")
+        self.assertIn("/v1/ros2-packet", r_root.json()["endpoints"])
 
         r_classes = self.client.get("/v1/classes")
         self.assertEqual(r_classes.status_code, 200)
@@ -44,6 +45,7 @@ class TestFastApiEndpoints(unittest.TestCase):
         self.assertIn("science_targets", data["overlays"])
         self.assertIn("traversability_index", data["telemetry"])
         self.assertIn("geometry_risk", data["telemetry"])
+        self.assertIn("sensor_health", data["telemetry"])
         self.assertEqual(data["telemetry"]["tta_mode"], "disabled")
 
     def test_plan_and_science_targets_endpoints(self):
@@ -84,6 +86,32 @@ class TestFastApiEndpoints(unittest.TestCase):
         self.assertEqual(telemetry["tta_mode"], "fast")
         self.assertIn("power_budget", telemetry)
         self.assertIn("energy_cost_wh_per_m", telemetry["power_budget"])
+
+    def test_ros2_packet_endpoint(self):
+        """Verifies /v1/ros2-packet exports all 5 ROS 2 / Nav2 topics cleanly."""
+        img = Image.fromarray(np.random.randint(50, 200, (64, 64, 3), dtype=np.uint8))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+        buf.seek(0)
+
+        resp = self.client.post(
+            "/v1/ros2-packet?resolution=256&planning_resolution=48",
+            files={"file": ("ros2_mars.jpg", buf, "image/jpeg")},
+        )
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.json()
+        self.assertIn("topics", payload)
+        self.assertIn("meta", payload)
+        for topic in [
+            "/autonav/costmap",
+            "/autonav/global_plan",
+            "/cmd_vel",
+            "/aegis/markers",
+            "/autonav/telemetry",
+        ]:
+            self.assertIn(topic, payload["topics"])
+        self.assertIn("sensor_health_status", payload["meta"])
+        self.assertIn("optical_trust_score", payload["meta"])
 
 
 if __name__ == "__main__":

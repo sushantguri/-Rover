@@ -16,11 +16,12 @@ import numpy as np
 from src.inference import MarsTerrainSegmenter
 from src.path_planner import MarsPathPlanner
 from src.kinematics import RoverKinematicPlanner
+from src.ros_bridge import Ros2NavBridge
 
 app = FastAPI(
     title="NASA JPL Mars Rover AutoNav Perception API",
-    description="REST API for DeepLabV3+ Mars Rover Terrain Segmentation, Traversability Scoring, Steering Kinematics, AEGIS Science Targeting, and A* Path Planning.",
-    version="2.1.0"
+    description="REST API for DeepLabV3+ Mars Rover Terrain Segmentation, Traversability Scoring, Steering Kinematics, AEGIS Science Targeting, Optical Sensor Watchdog, ROS 2 Nav2 Export, and A* Path Planning.",
+    version="2.2.0"
 )
 
 # Global model instance
@@ -64,7 +65,7 @@ def root():
         "model": "DeepLabV3+ (ResNet-50)",
         "status": "ONLINE",
         "docs_url": "/docs",
-        "endpoints": ["/v1/segment", "/v1/plan", "/v1/science-targets", "/v1/classes"]
+        "endpoints": ["/v1/segment", "/v1/plan", "/v1/science-targets", "/v1/ros2-packet", "/v1/classes"]
     }
 
 
@@ -87,6 +88,7 @@ async def segment_terrain(
     resolution: int = Query(512, ge=256, le=1024, description="Inference resolution"),
     sand_threshold: float = Query(25.0, ge=5.0, le=50.0, description="Sand emergency halt threshold (%)"),
     use_tta: bool = Query(False, description="Enable multi-view Test-Time Augmentation ensemble"),
+    auto_tta: bool = Query(False, description="Automatically enable TTA when optical watchdog detects glare, haze, or dark frames"),
     include_base64_overlays: bool = Query(False, description="Whether to include base64-encoded JPEG overlays")
 ):
     try:
@@ -96,7 +98,13 @@ async def segment_terrain(
         raise HTTPException(status_code=400, detail=f"Invalid image format: {e}")
 
     segmenter = get_segmenter()
-    result = segmenter.predict(image, img_size=resolution, sand_threshold=sand_threshold, use_tta=use_tta)
+    result = segmenter.predict(
+        image,
+        img_size=resolution,
+        sand_threshold=sand_threshold,
+        use_tta=use_tta,
+        auto_tta=auto_tta,
+    )
 
     response = {
         "telemetry": result["telemetry"]
@@ -187,4 +195,66 @@ async def extract_science_targets(
         response["target_reticle_overlay"] = encode_image_base64(seg_res["overlay_science_targets"])
 
     return JSONResponse(content=response)
+
+
+@app.post("/v1/ros2-packet")
+async def export_ros2_packet(
+    file: UploadFile = File(...),
+    resolution: int = Query(512, ge=256, le=1024, description="Inference resolution"),
+    planning_resolution: int = Query(96, ge=32, le=192, description="OccupancyGrid & A* grid resolution")
+):
+    """Exports serialized ROS 2 Nav2 / rosbridge messages (OccupancyGrid, Path, Twist, MarkerArray)."""
+    try:
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid image format: {e}")
+
+    segmenter = get_segmenter()
+    seg_res = segmenter.predict(image, img_size=resolution)
+    pred_mask = seg_res["prediction_mask"]
+    telemetry = seg_res["telemetry"]
+
+    planner = get_planner()
+    plan_data = planner.plan_path(pred_mask, planning_resolution=planning_resolution)
+
+    kin_planner = get_kinematic_planner()
+    eff_speed = telemetry["power_budget"]["effective_ground_speed_cm_s"]
+    kinematics = kin_planner.profile_trajectory(
+        plan_data,
+        image_shape=pred_mask.shape,
+        effective_speed_cm_s=eff_speed,
+        pred_mask=pred_mask,
+    )
+
+    small_mask = np.array(
+        Image.fromarray(pred_mask.astype(np.uint8)).resize(
+            (planning_resolution, planning_resolution), Image.NEAREST
+        ),
+        dtype=np.int64,
+    )
+    bridge = Ros2NavBridge(
+        map_resolution_meters=round(0.05 * (pred_mask.shape[0] / max(1, planning_resolution)), 4)
+    )
+    waypoints_for_ros = kinematics["smoothed_waypoints"] or plan_data["waypoints"]
+
+    payload = {
+        "topics": {
+            "/autonav/costmap": bridge.create_occupancy_grid_msg(small_mask),
+            "/autonav/global_plan": bridge.create_nav_path_msg(waypoints_for_ros, pred_mask.shape),
+            "/cmd_vel": bridge.create_cmd_vel_msg(kinematics, eff_speed),
+            "/aegis/markers": bridge.create_aegis_markers_msg(telemetry["science_targets"], pred_mask.shape),
+            "/autonav/telemetry": bridge.create_terrain_telemetry_msg(
+                telemetry["terrain_distribution_pct"], telemetry["traversability_index"]
+            ),
+        },
+        "meta": {
+            "safety_status": telemetry["safety_status"],
+            "steering_maneuver": kinematics["steering_maneuver"],
+            "sensor_health_status": telemetry["sensor_health"]["sensor_health_status"],
+            "optical_trust_score": telemetry["sensor_health"]["optical_trust_score"],
+        },
+    }
+    return JSONResponse(content=payload)
+
 

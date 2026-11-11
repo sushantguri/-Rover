@@ -48,6 +48,15 @@ class MissionReportGenerator:
         geom = telemetry.get("geometry_risk", {})
         kin = telemetry.get("kinematics", {})
         sci = telemetry.get("science_targets", {})
+        sensor = telemetry.get("sensor_health", {})
+
+        sensor_row_html = ""
+        if sensor:
+            sensor_row_html = (
+                f"<tr><td>Optical Sensor Watchdog</td>"
+                f"<td><strong>{sensor.get('sensor_health_status', 'NOMINAL_OPTICAL')}</strong> "
+                f"(Trust {sensor.get('optical_trust_score', 100.0)}%, Glare {sensor.get('overexposed_pct', 0.0)}%)</td></tr>"
+            )
 
         status = telemetry.get("safety_status", "UNKNOWN")
         if "CRITICAL" in status:
@@ -307,6 +316,7 @@ class MissionReportGenerator:
                     <tr><td>P90 Entropy Bound</td><td>{uncert.get('p90_prediction_entropy', 0.0)}</td></tr>
                     <tr><td>Ambiguous Pixel Ratio</td><td>{uncert.get('high_uncertainty_pixel_pct', 0.0)}%</td></tr>
                     <tr><td>Operational Guidance</td><td>{uncert.get('perception_recommendation', 'N/A')}</td></tr>
+                    {sensor_row_html}
                 </table>
             </div>
         </div>

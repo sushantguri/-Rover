@@ -20,6 +20,7 @@ from src.tta import TestTimeAugmenter
 from src.power_budget import RoverPowerBudgetEstimator
 from src.geometry_risk import TerrainGeometryAnalyzer
 from src.science_targets import AEGISTargetSelector
+from src.sensor_watchdog import OpticalSensorWatchdog
 
 # Costmap palette: Bedrock=Cyan/Blue, Soil=Green, Sand=Orange (Hazard), Big Rock=Red (Obstacle)
 COST_PALETTE = np.array([
@@ -60,6 +61,7 @@ class MarsTerrainSegmenter:
         self.power_estimator = RoverPowerBudgetEstimator()
         self.geometry_analyzer = TerrainGeometryAnalyzer()
         self.science_selector = AEGISTargetSelector(top_k=3)
+        self.sensor_watchdog = OpticalSensorWatchdog()
         self.mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
         self.std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
 
@@ -70,7 +72,8 @@ class MarsTerrainSegmenter:
         sand_threshold: float = 25.0,
         opacity: float = 0.60,
         use_tta: bool = False,
-        tta_mode: str = "fast"
+        tta_mode: str = "fast",
+        auto_tta: bool = False
     ) -> Dict[str, Any]:
         """
         Runs full terrain perception, generates visualizations, and computes drive telemetry.
@@ -86,6 +89,10 @@ class MarsTerrainSegmenter:
         orig_w, orig_h = orig_img.size
         orig_np = np.array(orig_img)
 
+        # Optical sensor fault diagnostics (solar glare, dust haze, dark frames)
+        sensor_health = self.sensor_watchdog.inspect_frame(orig_np)
+        effective_use_tta = bool(use_tta or (auto_tta and sensor_health["recommend_tta_boost"]))
+
         # Preprocess
         t0 = time.time()
         resized = orig_img.resize((img_size, img_size), Image.BILINEAR)
@@ -95,7 +102,7 @@ class MarsTerrainSegmenter:
 
         # Forward pass (Single Pass or Multi-View TTA Ensemble)
         with torch.no_grad():
-            if use_tta:
+            if effective_use_tta:
                 tta = TestTimeAugmenter(self.model, mode=tta_mode)
                 logits = tta.predict_pseudo_logits(tensor)
             else:
@@ -177,9 +184,11 @@ class MarsTerrainSegmenter:
         telemetry = {
             "image_dimensions": {"width": orig_w, "height": orig_h},
             "inference_resolution": img_size,
-            "tta_mode": tta_mode if use_tta else "disabled",
+            "tta_mode": tta_mode if effective_use_tta else "disabled",
+            "auto_tta_triggered": bool(auto_tta and not use_tta and sensor_health["recommend_tta_boost"]),
             "inference_latency_ms": round(latency_ms, 2),
             "device": str(self.device),
+            "sensor_health": sensor_health,
             "terrain_distribution_pct": class_pcts,
             "terrain_pixel_counts": class_pixels,
             "traversability_index": round(traversability_index, 2),

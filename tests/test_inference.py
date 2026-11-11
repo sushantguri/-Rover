@@ -53,6 +53,9 @@ class TestInferencePipeline(unittest.TestCase):
         self.assertIn("uncertainty", telemetry)
         self.assertIn("geometry_risk", telemetry)
         self.assertIn("science_targets", telemetry)
+        self.assertIn("sensor_health", telemetry)
+        self.assertIn("sensor_health_status", telemetry["sensor_health"])
+        self.assertIn("optical_trust_score", telemetry["sensor_health"])
 
         # 4. Check percentage sum adds to 100%
         pct_sum = sum(telemetry["terrain_distribution_pct"].values())
@@ -63,6 +66,16 @@ class TestInferencePipeline(unittest.TestCase):
         dummy_img = np.random.randint(50, 200, (128, 128, 3), dtype=np.uint8)
         result = self.segmenter.predict(dummy_img, img_size=128, use_tta=True, tta_mode="fast")
         self.assertEqual(result["telemetry"]["tta_mode"], "fast")
+
+    def test_auto_tta_triggered_on_glare_fault(self):
+        """Verifies optical watchdog automatically triggers TTA boost on glare-clipped frame."""
+        glare_img = np.full((128, 128, 3), 120, dtype=np.uint8)
+        glare_img[:50, :] = 254  # Heavy glare clipping
+        result = self.segmenter.predict(glare_img, img_size=128, use_tta=False, auto_tta=True)
+        telemetry = result["telemetry"]
+        self.assertEqual(telemetry["sensor_health"]["sensor_health_status"], "GLARE_SATURATION_WARNING")
+        self.assertTrue(telemetry["auto_tta_triggered"])
+        self.assertEqual(telemetry["tta_mode"], "fast")
 
     def test_traversability_index_bounds(self):
         """Verifies traversability index stays strictly within [0.0, 100.0]."""
