@@ -179,10 +179,12 @@ Open `http://localhost:7860` in your browser to launch the **NASA JPL Mission Co
 - **🔮 Prediction Uncertainty Heatmap:** Normalized Shannon entropy overlay identifying optical glare, boundary ambiguity, and shadowing artifacts.
 - **📡 Near-Field Zone Radar:** Separates Navcam depth zones into Immediate (0–5 m), Mid-Range (5–15 m), and Horizon (15–30 m), with connected-component boulder cluster boxes and chassis high-centering risk alerts.
 - **🎯 AEGIS Science Targets:** Autonomous Mastcam/ChemCam geological target prioritizer ranking exposed bedrock outcrops, stratigraphic boundaries, and safe float rocks with optical targeting reticles.
+- **🛡️ Conformal Sand Margin:** Temperature-scaled probability calibration highlighting sub-threshold thin-dust veneers over bedrock (`CALIBRATED_NOMINAL` / `BORDERLINE_SAND_DETECTED` / `CONSERVATIVE_SAND_ESCALATION`).
 - **📊 Real-Time Telemetry HUD:**
   - Dynamic Drive Safety Status Banner (`🟢 DRIVE PERMITTED`, `🟡 CAUTION ADVISORY`, `🔴 EMERGENCY HALT & REPLAN`).
   - Traversability Confidence Index ($0 - 100$).
   - Bekker-Wong Terramechanics Meters: Wheel sinkage (cm), slip ratio (%), and actuator motor torque demand (N·m).
+  - **IMU Attitude & Slope Stability:** Configurable pitch/roll terrain inclination modeling gravity-coupled wheel slip, rollover safety margins, and Martian downhill braking distance.
   - **Steering Kinematics Profiler:** Ramer-Douglas-Peucker trajectory smoothing, initial Ackermann steering maneuver, turn angles, and estimated traverse duration.
   - **MMRTG Power Budget & Energy Estimator:** Specific energy draw (Wh/m), slip-adjusted ground speed (cm/s), and 20m traverse battery draw (%).
   - **Multi-View Test-Time Augmentation (TTA):** Toggleable `auto (watchdog)`, `fast` (2-view), and `full` (4-view geometric + photometric glare/shadow) ensembling.
@@ -239,7 +241,7 @@ python scripts/batch_mission_audit.py --input-dir sample_images/ --output-dir ou
 ---
 
 ### 12. Production FastAPI REST Microservice & ROS 2 Nav2 Export
-Launch a high-performance REST microservice with automated Swagger API documentation (supports `?use_tta=true` & `?auto_tta=true` on `/v1/segment`, steering kinematics on `/v1/plan`, autonomous geological targeting on `/v1/science-targets`, and serialized ROS 2 packets on `/v1/ros2-packet`):
+Launch a high-performance REST microservice with automated Swagger API documentation (supports `?use_tta=true`, `?auto_tta=true`, & `?pitch_deg=...&roll_deg=...` on `/v1/segment`, steering kinematics on `/v1/plan`, autonomous geological targeting on `/v1/science-targets`, serialized ROS 2 packets on `/v1/ros2-packet`, and multi-leg SoC simulation on `/v1/simulate-sol`):
 ```bash
 uvicorn api:app --host 0.0.0.0 --port 8000 --reload
 
@@ -280,7 +282,7 @@ Navigate to `http://localhost:7860` to access the Mission Control interface.
 ---
 
 ### 16. Run Unit & Integration Tests
-Execute the comprehensive test suite verifying dataset loading, metric calculation, model architecture, TTA ensemble, optical sensor watchdog, Sol SoC mission simulation, inference telemetry, horizon geometry risk, steering kinematics, AEGIS science targeting, terramechanics, MMRTG power budgets, uncertainty estimation, HTML mission reports, ROS 2 Nav2 bridge, and FastAPI endpoints:
+Execute the comprehensive test suite verifying dataset loading, metric calculation, model architecture, TTA ensemble, optical sensor watchdog, temperature-scaled conformal sand safety margins, IMU slope stability, Sol SoC mission simulation, inference telemetry, horizon geometry risk, steering kinematics, AEGIS science targeting, terramechanics, MMRTG power budgets, uncertainty estimation, HTML mission reports, ROS 2 Nav2 bridge, CLI workflows, and FastAPI endpoints:
 ```bash
 python -m unittest discover -s tests
 ```
@@ -340,9 +342,11 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
 │   ├── kinematics.py           # Ramer-Douglas-Peucker smoothing & steering kinematics
 │   ├── science_targets.py      # NASA AEGIS geological science target prioritizer
 │   ├── terramechanics.py       # Bekker-Wong wheel sinkage & drawbar pull model
+│   ├── slope_stability.py      # IMU pitch/roll rollover margin & gravity-coupled slip
 │   ├── power_budget.py         # MMRTG power budget & wheel-slip energy estimator
 │   ├── sol_simulator.py        # Multi-waypoint Sol battery SoC & odometry drift simulator
 │   ├── uncertainty.py          # Shannon entropy & epistemic confidence estimation
+│   ├── calibration.py          # Temperature-scaled probabilities, ECE & conformal sand safety
 │   ├── report_generator.py     # Standalone HTML Sol Drive engineering report compiler
 │   ├── path_planner.py         # 8-connected A* search & obstacle inflation
 │   ├── ros_bridge.py           # ROS 2 Nav2 OccupancyGrid, Path, Twist & MarkerArray bridge
@@ -363,11 +367,14 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
     ├── test_path_planner.py
     ├── test_science_targets.py
     ├── test_terramechanics.py
+    ├── test_slope_stability.py
     ├── test_power_budget.py
     ├── test_sol_simulator.py
     ├── test_uncertainty.py
+    ├── test_calibration.py
     ├── test_report_generator.py
     ├── test_ros_bridge.py
+    ├── test_cli_workflows.py
     └── test_api.py
 ```
 
