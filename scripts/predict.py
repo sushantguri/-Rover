@@ -27,6 +27,9 @@ def main():
     parser.add_argument("--sand-threshold", type=float, default=25.0, help="Sand threshold for emergency halt alert (%)")
     parser.add_argument("--opacity", type=float, default=0.60, help="Overlay opacity")
     parser.add_argument("--tta", action="store_true", help="Enable Test-Time Augmentation ensemble")
+    parser.add_argument("--auto-tta", action="store_true", help="Auto-enable TTA when optical watchdog flags glare/haze/darkness")
+    parser.add_argument("--pitch", type=float, default=0.0, help="Rover longitudinal pitch angle (deg)")
+    parser.add_argument("--roll", type=float, default=0.0, help="Rover lateral roll angle (deg)")
     parser.add_argument("--device", type=str, default=None, help="Compute device (mps, cuda, cpu)")
     args = parser.parse_args()
 
@@ -56,7 +59,10 @@ def main():
             img_size=args.resolution,
             sand_threshold=args.sand_threshold,
             opacity=args.opacity,
-            use_tta=args.tta
+            use_tta=args.tta,
+            auto_tta=args.auto_tta,
+            pitch_deg=args.pitch,
+            roll_deg=args.roll,
         )
 
         telemetry = res["telemetry"]
@@ -65,20 +71,26 @@ def main():
         multiclass_path = os.path.join(args.output_dir, f"{base_name}_terrain.jpg")
         sand_hazard_path = os.path.join(args.output_dir, f"{base_name}_sand_hazard.jpg")
         costmap_path = os.path.join(args.output_dir, f"{base_name}_costmap.jpg")
+        safety_margin_path = os.path.join(args.output_dir, f"{base_name}_safety_margin.jpg")
         telemetry_path = os.path.join(args.output_dir, f"{base_name}_telemetry.json")
 
         Image.fromarray(res["overlay_multiclass"]).save(multiclass_path, quality=95)
         Image.fromarray(res["overlay_sand_hazard"]).save(sand_hazard_path, quality=95)
         Image.fromarray(res["overlay_costmap"]).save(costmap_path, quality=95)
+        Image.fromarray(res["overlay_safety_margin"]).save(safety_margin_path, quality=95)
 
         with open(telemetry_path, "w") as f:
             json.dump(telemetry, f, indent=2)
 
         # Print summary
         dist = telemetry["terrain_distribution_pct"]
+        sensor = telemetry["sensor_health"]
+        cal = telemetry["calibration_safety"]
+        slope = telemetry["slope_stability"]
         print(f"  ✓ Traversability Index: {telemetry['traversability_index']}/100.0 | Status: {telemetry['safety_status']}")
         print(f"  ✓ Distribution: Bedrock={dist['bedrock']:.1f}% | Soil={dist['soil']:.1f}% | Sand={dist['sand']:.1f}% | BigRock={dist['big rock']:.1f}%")
-        print(f"  ✓ Drive Command: {telemetry['autonomous_drive_action']} (Rec Speed: {telemetry['recommended_speed_cm_s']} cm/s)\n")
+        print(f"  ✓ Watchdog: {sensor['sensor_health_status']} (Trust {sensor['optical_trust_score']:.0f}%) | Conformal Sand: {cal['conservative_sand_pct']:.1f}% ({cal['conformal_alert']})")
+        print(f"  ✓ Attitude: {slope['stability_status']} ({slope['combined_tilt_deg']:.1f}°) | Drive Command: {telemetry['autonomous_drive_action']} ({telemetry['recommended_speed_cm_s']} cm/s)\n")
 
     print(f"All {len(image_paths)} image(s) successfully processed! Saved to {args.output_dir}/")
 

@@ -18,7 +18,13 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from src.model import get_deeplabv3plus_model
 
 
-def run_benchmark(device_str: str = "auto", num_iterations: int = 30, warmup_iterations: int = 10):
+def run_benchmark(
+    device_str: str = "auto",
+    num_iterations: int = 30,
+    warmup_iterations: int = 10,
+    resolutions: list | None = None,
+    output_file: str = "checkpoints/benchmark_latency_summary.json",
+):
     if device_str == "auto":
         if torch.backends.mps.is_available():
             device = torch.device("mps")
@@ -37,7 +43,7 @@ def run_benchmark(device_str: str = "auto", num_iterations: int = 30, warmup_ite
     model = get_deeplabv3plus_model(num_classes=4, encoder_weights=None).to(device)
     model.eval()
 
-    resolutions = [256, 384, 512]
+    resolutions = resolutions or [256, 384, 512]
     results = {}
 
     print(f"\n{'Resolution':<12} | {'Mean Latency':<14} | {'P95 Latency':<14} | {'Throughput':<12}")
@@ -84,8 +90,8 @@ def run_benchmark(device_str: str = "auto", num_iterations: int = 30, warmup_ite
             "throughput_fps": round(fps, 1)
         }
 
-    out_file = "checkpoints/benchmark_latency_summary.json"
-    with open(out_file, "w") as f:
+    os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
+    with open(output_file, "w") as f:
         json.dump({
             "device": str(device),
             "iterations": num_iterations,
@@ -93,7 +99,8 @@ def run_benchmark(device_str: str = "auto", num_iterations: int = 30, warmup_ite
         }, f, indent=2)
 
     print("-" * 60)
-    print(f"✓ Benchmark report saved to {out_file}\n")
+    print(f"✓ Benchmark report saved to {output_file}\n")
+    return results
 
 
 def main():
@@ -101,9 +108,17 @@ def main():
     parser.add_argument("--device", type=str, default="auto", help="Compute device (auto, mps, cuda, cpu)")
     parser.add_argument("--iterations", type=int, default=25, help="Number of benchmark iterations")
     parser.add_argument("--warmup", type=int, default=8, help="Warmup iterations")
+    parser.add_argument("--resolutions", nargs="+", type=int, default=[256, 384, 512], help="Input square resolutions to benchmark")
+    parser.add_argument("--output", "-o", type=str, default="checkpoints/benchmark_latency_summary.json", help="Output JSON summary path")
     args = parser.parse_args()
 
-    run_benchmark(device_str=args.device, num_iterations=args.iterations, warmup_iterations=args.warmup)
+    run_benchmark(
+        device_str=args.device,
+        num_iterations=args.iterations,
+        warmup_iterations=args.warmup,
+        resolutions=args.resolutions,
+        output_file=args.output,
+    )
 
 
 if __name__ == "__main__":
