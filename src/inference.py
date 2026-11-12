@@ -21,6 +21,8 @@ from src.power_budget import RoverPowerBudgetEstimator
 from src.geometry_risk import TerrainGeometryAnalyzer
 from src.science_targets import AEGISTargetSelector
 from src.sensor_watchdog import OpticalSensorWatchdog
+from src.calibration import ProbabilityCalibrator
+from src.slope_stability import SlopeStabilityAnalyzer
 
 # Costmap palette: Bedrock=Cyan/Blue, Soil=Green, Sand=Orange (Hazard), Big Rock=Red (Obstacle)
 COST_PALETTE = np.array([
@@ -62,6 +64,8 @@ class MarsTerrainSegmenter:
         self.geometry_analyzer = TerrainGeometryAnalyzer()
         self.science_selector = AEGISTargetSelector(top_k=3)
         self.sensor_watchdog = OpticalSensorWatchdog()
+        self.calibrator = ProbabilityCalibrator()
+        self.slope_analyzer = SlopeStabilityAnalyzer()
         self.mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
         self.std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
 
@@ -73,7 +77,9 @@ class MarsTerrainSegmenter:
         opacity: float = 0.60,
         use_tta: bool = False,
         tta_mode: str = "fast",
-        auto_tta: bool = False
+        auto_tta: bool = False,
+        pitch_deg: float = 0.0,
+        roll_deg: float = 0.0
     ) -> Dict[str, Any]:
         """
         Runs full terrain perception, generates visualizations, and computes drive telemetry.
@@ -126,6 +132,14 @@ class MarsTerrainSegmenter:
         overlay_uncertainty = self.uncertainty_estimator.generate_uncertainty_heatmap(orig_np, entropy_map, alpha=opacity)
         uncertainty_telemetry = self.uncertainty_estimator.evaluate_uncertainty_telemetry(entropy_map)
 
+        # Temperature-Scaled Calibration & Conformal Sand Safety Margin
+        calibration_safety, borderline_sand_mask = self.calibrator.evaluate_safety_margin(
+            logits, pred_full, sand_threshold_pct=sand_threshold
+        )
+        overlay_safety_margin = self.calibrator.render_safety_margin_overlay(
+            orig_np, pred_full, borderline_sand_mask, alpha=opacity
+        )
+
         # Perspective Range-Zone & Boulder Geometry Risk Analysis
         geometry_risk = self.geometry_analyzer.analyze(pred_full)
         overlay_zone_radar = self.geometry_analyzer.render_zone_radar_overlay(
@@ -174,6 +188,19 @@ class MarsTerrainSegmenter:
             recommended_speed_cm_s = 4.5
             slip_probability = "LOW (< 5%)"
 
+        # Rover Attitude & Gravity-Coupled Slope Stability
+        slope_stability = self.slope_analyzer.analyze_attitude(
+            pitch_deg=pitch_deg,
+            roll_deg=roll_deg,
+            terramechanics_data=mechanics_telemetry,
+            commanded_speed_cm_s=recommended_speed_cm_s,
+        )
+        if slope_stability["stability_status"] == "TIPOVER_ENVELOPE_EXCEEDED":
+            safety_status = "CRITICAL_HAZARD"
+            drive_action = "EMERGENCY_HALT_ATTITUDE_RECOVERY"
+            recommended_speed_cm_s = 0.0
+            slip_probability = "EXTREME (ROLLOVER RISK)"
+
         # MMRTG Power Budget Modeling
         power_telemetry = self.power_estimator.estimate_traverse_energy(
             terramechanics_data=mechanics_telemetry,
@@ -197,8 +224,10 @@ class MarsTerrainSegmenter:
             "recommended_speed_cm_s": recommended_speed_cm_s,
             "wheel_slip_probability": slip_probability,
             "terramechanics": mechanics_telemetry,
+            "slope_stability": slope_stability,
             "power_budget": power_telemetry,
             "uncertainty": uncertainty_telemetry,
+            "calibration_safety": calibration_safety,
             "geometry_risk": geometry_risk,
             "science_targets": science_targets
         }
@@ -211,5 +240,6 @@ class MarsTerrainSegmenter:
             "overlay_uncertainty": overlay_uncertainty,
             "overlay_zone_radar": overlay_zone_radar,
             "overlay_science_targets": overlay_science_targets,
+            "overlay_safety_margin": overlay_safety_margin,
             "telemetry": telemetry
         }

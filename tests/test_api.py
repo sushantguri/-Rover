@@ -21,6 +21,7 @@ class TestFastApiEndpoints(unittest.TestCase):
         self.assertEqual(r_root.status_code, 200)
         self.assertEqual(r_root.json()["status"], "ONLINE")
         self.assertIn("/v1/ros2-packet", r_root.json()["endpoints"])
+        self.assertIn("/v1/simulate-sol", r_root.json()["endpoints"])
 
         r_classes = self.client.get("/v1/classes")
         self.assertEqual(r_classes.status_code, 200)
@@ -34,7 +35,7 @@ class TestFastApiEndpoints(unittest.TestCase):
         buf.seek(0)
 
         files = {"file": ("test_mars.jpg", buf, "image/jpeg")}
-        resp = self.client.post("/v1/segment?resolution=256&include_base64_overlays=true", files=files)
+        resp = self.client.post("/v1/segment?resolution=256&include_base64_overlays=true&pitch_deg=12.0&roll_deg=4.0", files=files)
 
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
@@ -43,9 +44,13 @@ class TestFastApiEndpoints(unittest.TestCase):
         self.assertIn("multiclass_terrain", data["overlays"])
         self.assertIn("zone_radar", data["overlays"])
         self.assertIn("science_targets", data["overlays"])
+        self.assertIn("safety_margin", data["overlays"])
         self.assertIn("traversability_index", data["telemetry"])
         self.assertIn("geometry_risk", data["telemetry"])
         self.assertIn("sensor_health", data["telemetry"])
+        self.assertIn("slope_stability", data["telemetry"])
+        self.assertIn("calibration_safety", data["telemetry"])
+        self.assertEqual(data["telemetry"]["slope_stability"]["pitch_deg"], 12.0)
         self.assertEqual(data["telemetry"]["tta_mode"], "disabled")
 
     def test_plan_and_science_targets_endpoints(self):
@@ -112,6 +117,28 @@ class TestFastApiEndpoints(unittest.TestCase):
             self.assertIn(topic, payload["topics"])
         self.assertIn("sensor_health_status", payload["meta"])
         self.assertIn("optical_trust_score", payload["meta"])
+
+    def test_simulate_sol_endpoint(self):
+        """Verifies /v1/simulate-sol executes multi-leg SoC and odometry drift simulation."""
+        req = {
+            "initial_soc_pct": 88.0,
+            "min_reserve_soc_pct": 30.0,
+            "steps": [
+                {
+                    "safety_status": "NOMINAL_DRIVE",
+                    "terramechanics": {"expected_wheel_slip_pct": 5.0},
+                    "power_budget": {"effective_ground_speed_cm_s": 4.5, "total_system_power_w": 92.0},
+                    "kinematics": {"estimated_distance_m": 18.0, "steering_maneuver": "STRAIGHT_CRUISE"},
+                    "science_targets": {"target_count": 1},
+                }
+            ],
+        }
+        resp = self.client.post("/v1/simulate-sol", json=req)
+        self.assertEqual(resp.status_code, 200)
+        sim = resp.json()
+        self.assertEqual(sim["mission_status"], "SOL_DRIVE_COMPLETED")
+        self.assertAlmostEqual(sim["total_distance_m"], 18.0, places=1)
+        self.assertEqual(sim["aegis_science_stops"], 1)
 
 
 if __name__ == "__main__":

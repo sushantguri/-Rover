@@ -49,6 +49,8 @@ class MissionReportGenerator:
         kin = telemetry.get("kinematics", {})
         sci = telemetry.get("science_targets", {})
         sensor = telemetry.get("sensor_health", {})
+        slope = telemetry.get("slope_stability", {})
+        cal = telemetry.get("calibration_safety", {})
 
         sensor_row_html = ""
         if sensor:
@@ -56,6 +58,20 @@ class MissionReportGenerator:
                 f"<tr><td>Optical Sensor Watchdog</td>"
                 f"<td><strong>{sensor.get('sensor_health_status', 'NOMINAL_OPTICAL')}</strong> "
                 f"(Trust {sensor.get('optical_trust_score', 100.0)}%, Glare {sensor.get('overexposed_pct', 0.0)}%)</td></tr>"
+            )
+        slope_row_html = ""
+        if slope:
+            slope_row_html = (
+                f"<tr><td>Attitude &amp; Slope Stability</td>"
+                f"<td><strong>{slope.get('stability_status', 'NOMINAL_ATTITUDE')}</strong> "
+                f"(Tilt {slope.get('combined_tilt_deg', 0.0)}°, Slip {slope.get('slope_coupled_slip_pct', 0.0)}%)</td></tr>"
+            )
+        cal_row_html = ""
+        if cal:
+            cal_row_html = (
+                f"<tr><td>Conformal Sand Recall Margin</td>"
+                f"<td><strong>{cal.get('conformal_alert', 'CALIBRATED_NOMINAL')}</strong> "
+                f"(Conservative {cal.get('conservative_sand_pct', 0.0)}%, Borderline +{cal.get('borderline_sand_pct', 0.0)}%)</td></tr>"
             )
 
         status = telemetry.get("safety_status", "UNKNOWN")
@@ -305,6 +321,7 @@ class MissionReportGenerator:
                     <tr><td>Actuator Torque Demand</td><td>{mech.get('actuator_torque_demand_nm', 0.0)} N·m / wheel</td></tr>
                     <tr><td>Specific Energy Cost</td><td>{power.get('energy_cost_wh_per_m', 0.0)} Wh / meter</td></tr>
                     <tr><td>20m Traverse Battery Draw</td><td>{power.get('traverse_20m_energy_wh', 0.0)} Wh ({power.get('battery_impact_pct', 0.0)}%)</td></tr>
+                    {slope_row_html}
                 </table>
             </div>
             <div class="card">
@@ -317,6 +334,7 @@ class MissionReportGenerator:
                     <tr><td>Ambiguous Pixel Ratio</td><td>{uncert.get('high_uncertainty_pixel_pct', 0.0)}%</td></tr>
                     <tr><td>Operational Guidance</td><td>{uncert.get('perception_recommendation', 'N/A')}</td></tr>
                     {sensor_row_html}
+                    {cal_row_html}
                 </table>
             </div>
         </div>

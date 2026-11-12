@@ -29,6 +29,7 @@ class TestInferencePipeline(unittest.TestCase):
             "overlay_uncertainty", 
             "overlay_zone_radar",
             "overlay_science_targets",
+            "overlay_safety_margin",
             "telemetry"
         }
         self.assertTrue(expected_keys.issubset(result.keys()))
@@ -41,6 +42,7 @@ class TestInferencePipeline(unittest.TestCase):
         self.assertEqual(result["overlay_uncertainty"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_zone_radar"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_science_targets"].shape, (128, 128, 3))
+        self.assertEqual(result["overlay_safety_margin"].shape, (128, 128, 3))
 
         # 3. Check telemetry schema
         telemetry = result["telemetry"]
@@ -49,8 +51,10 @@ class TestInferencePipeline(unittest.TestCase):
         self.assertIn("autonomous_drive_action", telemetry)
         self.assertIn("terrain_distribution_pct", telemetry)
         self.assertIn("terramechanics", telemetry)
+        self.assertIn("slope_stability", telemetry)
         self.assertIn("power_budget", telemetry)
         self.assertIn("uncertainty", telemetry)
+        self.assertIn("calibration_safety", telemetry)
         self.assertIn("geometry_risk", telemetry)
         self.assertIn("science_targets", telemetry)
         self.assertIn("sensor_health", telemetry)
@@ -76,6 +80,14 @@ class TestInferencePipeline(unittest.TestCase):
         self.assertEqual(telemetry["sensor_health"]["sensor_health_status"], "GLARE_SATURATION_WARNING")
         self.assertTrue(telemetry["auto_tta_triggered"])
         self.assertEqual(telemetry["tta_mode"], "fast")
+
+    def test_steep_attitude_triggers_rollover_halt(self):
+        """Verifies extreme pitch/roll attitude escalates predict() safety_status to CRITICAL_HAZARD."""
+        dummy_img = Image.new("RGB", (64, 64), color=(140, 120, 100))
+        res = self.segmenter.predict(dummy_img, img_size=64, pitch_deg=25.0, roll_deg=20.0)
+        self.assertEqual(res["telemetry"]["slope_stability"]["stability_status"], "TIPOVER_ENVELOPE_EXCEEDED")
+        self.assertEqual(res["telemetry"]["safety_status"], "CRITICAL_HAZARD")
+        self.assertEqual(res["telemetry"]["recommended_speed_cm_s"], 0.0)
 
     def test_traversability_index_bounds(self):
         """Verifies traversability index stays strictly within [0.0, 100.0]."""

@@ -7,9 +7,10 @@ Run server:
 """
 import io
 import base64
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, File, UploadFile, Query, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from PIL import Image
 import numpy as np
 
@@ -17,12 +18,20 @@ from src.inference import MarsTerrainSegmenter
 from src.path_planner import MarsPathPlanner
 from src.kinematics import RoverKinematicPlanner
 from src.ros_bridge import Ros2NavBridge
+from src.sol_simulator import SolMissionSimulator
 
 app = FastAPI(
     title="NASA JPL Mars Rover AutoNav Perception API",
-    description="REST API for DeepLabV3+ Mars Rover Terrain Segmentation, Traversability Scoring, Steering Kinematics, AEGIS Science Targeting, Optical Sensor Watchdog, ROS 2 Nav2 Export, and A* Path Planning.",
-    version="2.2.0"
+    description="REST API for DeepLabV3+ Mars Rover Terrain Segmentation, Traversability Scoring, Steering Kinematics, Slope Stability, Conformal Sand Margins, AEGIS Science Targeting, Sol Mission Simulation, ROS 2 Nav2 Export, and A* Path Planning.",
+    version="2.3.0"
 )
+
+
+class SolSimRequest(BaseModel):
+    initial_soc_pct: float = Field(90.0, ge=5.0, le=100.0)
+    min_reserve_soc_pct: float = Field(30.0, ge=0.0, le=80.0)
+    max_consecutive_halts: int = Field(3, ge=1, le=20)
+    steps: List[Dict[str, Any]] = Field(..., min_length=1)
 
 # Global model instance
 _segmenter: Optional[MarsTerrainSegmenter] = None
@@ -65,7 +74,7 @@ def root():
         "model": "DeepLabV3+ (ResNet-50)",
         "status": "ONLINE",
         "docs_url": "/docs",
-        "endpoints": ["/v1/segment", "/v1/plan", "/v1/science-targets", "/v1/ros2-packet", "/v1/classes"]
+        "endpoints": ["/v1/segment", "/v1/plan", "/v1/science-targets", "/v1/ros2-packet", "/v1/simulate-sol", "/v1/classes"]
     }
 
 
@@ -89,6 +98,8 @@ async def segment_terrain(
     sand_threshold: float = Query(25.0, ge=5.0, le=50.0, description="Sand emergency halt threshold (%)"),
     use_tta: bool = Query(False, description="Enable multi-view Test-Time Augmentation ensemble"),
     auto_tta: bool = Query(False, description="Automatically enable TTA when optical watchdog detects glare, haze, or dark frames"),
+    pitch_deg: float = Query(0.0, ge=-45.0, le=45.0, description="Rover longitudinal pitch angle in degrees"),
+    roll_deg: float = Query(0.0, ge=-45.0, le=45.0, description="Rover lateral roll angle in degrees"),
     include_base64_overlays: bool = Query(False, description="Whether to include base64-encoded JPEG overlays")
 ):
     try:
@@ -104,6 +115,8 @@ async def segment_terrain(
         sand_threshold=sand_threshold,
         use_tta=use_tta,
         auto_tta=auto_tta,
+        pitch_deg=pitch_deg,
+        roll_deg=roll_deg,
     )
 
     response = {
@@ -117,7 +130,8 @@ async def segment_terrain(
             "traversability_costmap": encode_image_base64(result["overlay_costmap"]),
             "uncertainty_heatmap": encode_image_base64(result["overlay_uncertainty"]),
             "zone_radar": encode_image_base64(result["overlay_zone_radar"]),
-            "science_targets": encode_image_base64(result["overlay_science_targets"])
+            "science_targets": encode_image_base64(result["overlay_science_targets"]),
+            "safety_margin": encode_image_base64(result["overlay_safety_margin"])
         }
 
     return JSONResponse(content=response)
@@ -256,5 +270,17 @@ async def export_ros2_packet(
         },
     }
     return JSONResponse(content=payload)
+
+
+@app.post("/v1/simulate-sol")
+def simulate_sol_mission(request: SolSimRequest):
+    """Simulates multi-waypoint Mars Sol MMRTG battery SoC cycles, odometry drift, and safety aborts."""
+    sim = SolMissionSimulator(
+        initial_soc_pct=request.initial_soc_pct,
+        min_reserve_soc_pct=request.min_reserve_soc_pct,
+        max_consecutive_halts=request.max_consecutive_halts,
+    )
+    return JSONResponse(content=sim.simulate_sol_traverse(request.steps))
+
 
 

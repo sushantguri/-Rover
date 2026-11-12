@@ -25,6 +25,8 @@ from src.geometry_risk import TerrainGeometryAnalyzer
 from src.kinematics import RoverKinematicPlanner
 from src.science_targets import AEGISTargetSelector
 from src.sensor_watchdog import OpticalSensorWatchdog
+from src.calibration import ProbabilityCalibrator
+from src.slope_stability import SlopeStabilityAnalyzer
 
 SAMPLE_DIR = "sample_images"
 curated_sample_paths = [
@@ -97,10 +99,11 @@ def make_side_by_side_comparison(orig_np, overlay_np):
     return np.hstack([orig_np, divider, overlay_np])
 
 
-def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_threshold=25.0, tta_mode="disabled", sol_number=4118):
+def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_threshold=25.0, tta_mode="disabled", sol_number=4118, pitch_deg=0.0, roll_deg=0.0):
     """
     High-fidelity inference pipeline with multi-view outputs, TTA ensemble,
-    Bekker-Wong terramechanics, MMRTG power budget telemetry, and HTML field reports.
+    Bekker-Wong terramechanics, slope stability, conformal safety margins,
+    MMRTG power budget telemetry, and HTML field reports.
     """
     if input_image is None:
         empty_msg = """
@@ -110,7 +113,7 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
             <div style="font-size: 13px; color: #64748b; margin-top: 4px;">Upload a Mars rover image or select a mission sample to initiate terrain telemetry.</div>
         </div>
         """
-        return None, None, None, None, None, None, None, None, empty_msg, "", None
+        return None, None, None, None, None, None, None, None, None, empty_msg, "", None
 
     t_start = time.time()
     model = load_inference_model()
@@ -173,11 +176,19 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
     path_data = planner.plan_path(pred_np, planning_resolution=128)
     trajectory_view = planner.render_path_overlay(overlay_standard, path_data)
 
-    # 6. Epistemic Uncertainty & Prediction Entropy
+    # 6. Epistemic Uncertainty & Conformal Sand Safety Margin
     uncertainty_engine = UncertaintyEstimator()
     entropy_map = uncertainty_engine.compute_entropy_map(logits)
     uncertainty_view = uncertainty_engine.generate_uncertainty_heatmap(orig_np, entropy_map, alpha=opacity)
     uncertainty_telemetry = uncertainty_engine.evaluate_uncertainty_telemetry(entropy_map)
+
+    calibrator = ProbabilityCalibrator()
+    calibration_safety, borderline_sand_mask = calibrator.evaluate_safety_margin(
+        logits, pred_np, sand_threshold_pct=float(sand_threshold)
+    )
+    safety_margin_view = calibrator.render_safety_margin_overlay(
+        orig_np, pred_np, borderline_sand_mask, alpha=opacity
+    )
 
     # Metrics Computation
     total_pixels = pred_np.size
@@ -238,6 +249,27 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
         recommended_speed_val = 4.5
         slip_risk = "LOW (< 5%)"
         steering_mode = "NOMINAL WAYPOINT TRAVERSE"
+
+    # Rover Attitude & Slope Stability Envelope
+    slope_analyzer = SlopeStabilityAnalyzer()
+    slope_stability = slope_analyzer.analyze_attitude(
+        pitch_deg=float(pitch_deg),
+        roll_deg=float(roll_deg),
+        terramechanics_data=mechanics,
+        commanded_speed_cm_s=recommended_speed_val,
+    )
+    if slope_stability["stability_status"] == "TIPOVER_ENVELOPE_EXCEEDED":
+        safety_status_code = "CRITICAL_HAZARD"
+        drive_action_code = "EMERGENCY_HALT_ATTITUDE_RECOVERY"
+        status_title = "CRITICAL ATTITUDE ROLLOVER ENVELOPE EXCEEDED"
+        status_desc = f"Combined rover attitude tilt (<strong>{slope_stability['combined_tilt_deg']:.1f}°</strong>) exceeds JPL 30° operational slope envelope. Autonomous climb halted."
+        status_theme = "critical"
+        status_color = "#ef4444"
+        badge_text = "🔴 ATTITUDE HALT & RECOVER"
+        speed_rec = "0.0 cm/s (TILT HALT)"
+        recommended_speed_val = 0.0
+        slip_risk = "EXTREME (ROLLOVER RISK)"
+        steering_mode = "DOWNHILL RECOVERY ARC"
 
     # MMRTG Power Budget & Mobility Energy Consumption
     power_estimator = RoverPowerBudgetEstimator()
@@ -488,6 +520,33 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
                 </div>
             </div>
         </div>
+
+        <!-- Attitude Slope Stability & Conformal Sand Margin -->
+        <div class="telemetry-card">
+            <div class="hud-header">IMU SLOPE STABILITY &amp; CONFORMAL SAND SAFETY MARGIN</div>
+            <div class="hud-grid">
+                <div class="hud-item">
+                    <div class="hud-label">ATTITUDE STABILITY STATE</div>
+                    <div class="hud-val" style="color: {'#ef4444' if 'CRITICAL' in slope_stability['stability_status'] or 'EXCEEDED' in slope_stability['stability_status'] else '#f59e0b' if 'CAUTION' in slope_stability['stability_status'] else '#10b981'};">
+                        {slope_stability['stability_status'].replace('_', ' ')} ({slope_stability['combined_tilt_deg']:.1f}°)
+                    </div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">SLOPE-COUPLED SLIP / MARGIN</div>
+                    <div class="hud-val">{slope_stability['slope_coupled_slip_pct']:.1f}% slip ({slope_stability['rollover_safety_margin_pct']:.0f}% reserve)</div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">CONFORMAL SAND RECALL</div>
+                    <div class="hud-val" style="color: {'#ef4444' if 'ESCALATION' in calibration_safety['conformal_alert'] else '#f59e0b' if 'BORDERLINE' in calibration_safety['conformal_alert'] else '#10b981'};">
+                        {calibration_safety['conservative_sand_pct']:.1f}% (+{calibration_safety['borderline_sand_pct']:.1f}% fringe)
+                    </div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">DOWNHILL BRAKING / GRADE</div>
+                    <div class="hud-val">{slope_stability['braking_distance_cm']:.2f} cm ({slope_stability['grade_resistance_n']:+.0f} N)</div>
+                </div>
+            </div>
+        </div>
     </div>
     """
 
@@ -497,6 +556,8 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
         "inference_latency_ms": round(latency_ms, 2),
         "device": device,
         "sensor_health": sensor_health,
+        "slope_stability": slope_stability,
+        "calibration_safety": calibration_safety,
         "safety_status": safety_status_code,
         "traversability_index": round(traversability, 1),
         "autonomous_drive_action": drive_action_code,
@@ -534,10 +595,12 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
 [UTC {now_utc}] [GEOMETRY] NearField Sand={geometry_risk['nearfield_sand_pct']:.1f}% | Clusters={geometry_risk['boulder_cluster_count']} | HighCenterRisk={geometry_risk['high_centering_risk']}
 [UTC {now_utc}] [KINEMATICS] Maneuver={kinematics['steering_maneuver']} ({kinematics['initial_heading_deg']:+.1f} deg) | Arc={kinematics['estimated_distance_m']:.1f}m
 [UTC {now_utc}] [AEGIS-SCI] Status={science_targets['aegis_status']} | Targets Locked={science_targets['target_count']}
+[UTC {now_utc}] [ATTITUDE-IMU] Status={slope_stability['stability_status']} | Tilt={slope_stability['combined_tilt_deg']:.1f}deg | CoupledSlip={slope_stability['slope_coupled_slip_pct']:.1f}%
+[UTC {now_utc}] [CONFORMAL-SAFE] {calibration_safety['conformal_alert']} | ConservativeSand={calibration_safety['conservative_sand_pct']:.1f}%
 [UTC {now_utc}] [POWER-MMRTG] {power_budget['power_status']} | 20m Energy={power_budget['traverse_20m_energy_wh']:.1f}Wh | EffSpeed={power_budget['effective_ground_speed_cm_s']:.2f}cm/s
 [UTC {now_utc}] [AUTONAV-PLANNER] Drive Command: {speed_rec} | Mode: {steering_mode} | Sol {int(sol_number)} Report Ready."""
 
-    return overlay_standard, sand_hazard_view, costmap_view, side_by_side_view, trajectory_view, uncertainty_view, zone_radar_view, science_targets_view, telemetry_html, flight_log, report_path
+    return overlay_standard, sand_hazard_view, costmap_view, side_by_side_view, trajectory_view, uncertainty_view, zone_radar_view, science_targets_view, safety_margin_view, telemetry_html, flight_log, report_path
 
 
 # High-Tech NASA JPL Dark Glassmorphism CSS
@@ -923,6 +986,24 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
                         label="Mars Mission Sol #",
                         info="Tagged in telemetry & downloadable field report"
                     )
+
+                with gr.Row():
+                    pitch_slider = gr.Slider(
+                        minimum=-35.0,
+                        maximum=35.0,
+                        value=0.0,
+                        step=1.0,
+                        label="Rover IMU Pitch (°)",
+                        info="+Uphill / -Downhill grade angle"
+                    )
+                    roll_slider = gr.Slider(
+                        minimum=-35.0,
+                        maximum=35.0,
+                        value=0.0,
+                        step=1.0,
+                        label="Rover IMU Roll (°)",
+                        info="Side-slope tilt angle (JPL 30° max limit)"
+                    )
                 
             submit_btn = gr.Button(
                 "🛰️ ANALYZE TERRAIN & COMPUTE TRAVERSABILITY", 
@@ -958,6 +1039,8 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
                     output_zone_radar = gr.Image(type="numpy", label="0-5m Near-Field Hazard & Boulder Cluster Radar", height=420)
                 with gr.TabItem("🎯 AEGIS Science Targets"):
                     output_science = gr.Image(type="numpy", label="Autonomous ChemCam / Mastcam Science Target Reticles", height=420)
+                with gr.TabItem("🛡️ Conformal Sand Margin"):
+                    output_safety_margin = gr.Image(type="numpy", label="Calibrated Borderline Sand Recall Margin (Magenta = Sub-threshold Fringe)", height=420)
                     
             # Telemetry Metrics Dashboard
             stats_box = gr.HTML("""
@@ -1005,8 +1088,8 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
     # Interactive Event Binding
     submit_btn.click(
         fn=segment_mars_terrain,
-        inputs=[input_image, opacity_slider, img_size_dropdown, sand_thresh_slider, tta_mode_dropdown, sol_number_input],
-        outputs=[output_overlay, output_sand, output_costmap, output_sbs, output_path, output_uncertainty, output_zone_radar, output_science, stats_box, flight_terminal, report_download]
+        inputs=[input_image, opacity_slider, img_size_dropdown, sand_thresh_slider, tta_mode_dropdown, sol_number_input, pitch_slider, roll_slider],
+        outputs=[output_overlay, output_sand, output_costmap, output_sbs, output_path, output_uncertainty, output_zone_radar, output_science, output_safety_margin, stats_box, flight_terminal, report_download]
     )
 
 if __name__ == "__main__":
