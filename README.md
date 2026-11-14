@@ -233,15 +233,23 @@ python scripts/simulate_drive.py --image sample_images/test_mixed_terrain.jpg --
 ---
 
 ### 11. Batch Mission Fleet Audit CLI
-Batch-audit all camera frames in a directory and export traversability, near-field risk, steering maneuvers, MMRTG energy, and top AEGIS science targets to CSV & JSON:
+Batch-audit all camera frames in a directory and export traversability, near-field risk, steering maneuvers, MMRTG energy, wheel wear, and solar-thermal flux to CSV & JSON:
 ```bash
 python scripts/batch_mission_audit.py --input-dir sample_images/ --output-dir outputs/mission_audit/
 ```
 
 ---
 
-### 12. Production FastAPI REST Microservice & ROS 2 Nav2 Export
-Launch a high-performance REST microservice with automated Swagger API documentation (supports `?use_tta=true`, `?auto_tta=true`, & `?pitch_deg=...&roll_deg=...` on `/v1/segment`, steering kinematics on `/v1/plan`, autonomous geological targeting on `/v1/science-targets`, serialized ROS 2 packets on `/v1/ros2-packet`, and multi-leg SoC simulation on `/v1/simulate-sol`):
+### 12. Fleet Wheel Wear & Ventifact Puncture Hazard Audit CLI
+Audit rover fleet aluminum wheel skin wear (0.75 mm skin), peak contact stress (MPa), puncture risk on sharp ventifacts, and save ruby-red damage overlays:
+```bash
+python scripts/audit_wheel_wear.py --input-dir sample_images/ --output-dir outputs/wheel_wear_audit/ --save-overlays
+```
+
+---
+
+### 13. Production FastAPI REST Microservice & ROS 2 Nav2 Export
+Launch a high-performance REST microservice with automated Swagger API documentation (supports `?use_tta=true`, `?auto_tta=true`, `?pitch_deg=...&roll_deg=...`, `?local_sol_hour=...&dust_tau=...` on `/v1/segment`, steering kinematics on `/v1/plan`, autonomous geological targeting on `/v1/science-targets`, multi-layer costmap fusion on `/v1/costmap-fusion`, wheel fatigue mechanics on `/v1/wheel-wear`, serialized ROS 2 packets on `/v1/ros2-packet`, and multi-leg SoC simulation on `/v1/simulate-sol`):
 ```bash
 uvicorn api:app --host 0.0.0.0 --port 8000 --reload
 
@@ -252,7 +260,7 @@ Interactive API docs available at `http://localhost:8000/docs`.
 
 ---
 
-### 13. Hardware Latency & TTA Ablation Benchmarks
+### 14. Hardware Latency & TTA Ablation Benchmarks
 Benchmark DeepLabV3+ ResNet-50 inference speed across resolutions (256x256, 384x384, 512x512) and quantify single-pass vs. TTA ensemble mIoU/latency trade-offs:
 ```bash
 # Hardware latency profiler
@@ -264,7 +272,7 @@ python scripts/eval_tta.py --split test_min3 --mode fast --max-samples 50
 
 ---
 
-### 14. Edge Robotics Deployment: TorchScript & ONNX Export
+### 15. Edge Robotics Deployment: TorchScript & ONNX Export
 Export the DeepLabV3+ model for low-latency onboard robotic compute (NVIDIA Jetson, Edge TPU, ROS/ROS2 nodes):
 ```bash
 python scripts/export_onnx.py --checkpoint checkpoints/best_deeplabv3plus.pth --output-dir checkpoints/
@@ -272,7 +280,7 @@ python scripts/export_onnx.py --checkpoint checkpoints/best_deeplabv3plus.pth --
 
 ---
 
-### 15. Docker Deployment
+### 16. Docker Deployment
 Launch the entire system inside a containerized environment with zero dependency conflicts:
 ```bash
 docker compose up --build
@@ -281,8 +289,8 @@ Navigate to `http://localhost:7860` to access the Mission Control interface.
 
 ---
 
-### 16. Run Unit & Integration Tests
-Execute the comprehensive test suite verifying dataset loading, metric calculation, model architecture, TTA ensemble, optical sensor watchdog, temperature-scaled conformal sand safety margins, IMU slope stability, Sol SoC mission simulation, inference telemetry, horizon geometry risk, steering kinematics, AEGIS science targeting, terramechanics, MMRTG power budgets, uncertainty estimation, HTML mission reports, ROS 2 Nav2 bridge, CLI workflows, and FastAPI endpoints:
+### 17. Run Unit & Integration Tests
+Execute the comprehensive test suite verifying dataset loading, metric calculation, model architecture, TTA ensemble, optical sensor watchdog, temperature-scaled conformal sand safety margins, IMU slope stability, Sol SoC mission simulation, inference telemetry, horizon geometry risk, steering kinematics, AEGIS science targeting, wheel wear mechanics, diurnal solar thermal modeling, multi-layer costmap fusion, terramechanics, MMRTG power budgets, uncertainty estimation, HTML mission reports, ROS 2 Nav2 bridge, CLI workflows, and FastAPI endpoints:
 ```bash
 python -m unittest discover -s tests
 ```
@@ -321,6 +329,7 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
 ├── sample_images/              # 18 curated Mars rover testing images
 ├── scripts/                    # Utility & deployment scripts
 │   ├── predict.py              # Standalone CLI batch prediction & costmap generator
+│   ├── audit_wheel_wear.py     # Fleet aluminum wheel fatigue & ventifact hazard audit CLI
 │   ├── generate_mission_report.py # Sol Drive Engineering HTML field report CLI
 │   ├── batch_mission_audit.py  # Fleet-wide CSV & JSON perception/kinematics/AEGIS audit
 │   ├── simulate_drive.py       # A* autonomous drive trajectory simulation
@@ -341,6 +350,9 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
 │   ├── geometry_risk.py        # Perspective range-zone radar & boulder high-centering risk
 │   ├── kinematics.py           # Ramer-Douglas-Peucker smoothing & steering kinematics
 │   ├── science_targets.py      # NASA AEGIS geological science target prioritizer
+│   ├── wheel_wear.py           # Ventifact micro-relief roughness, contact stress & puncture fatigue
+│   ├── solar_thermal.py        # Diurnal solar insolation flux, dust optical depth & battery heaters
+│   ├── costmap_fusion.py       # Multi-layer AutoNav Nav2 costmap fusion (semantic/slope/uncertainty/wear)
 │   ├── terramechanics.py       # Bekker-Wong wheel sinkage & drawbar pull model
 │   ├── slope_stability.py      # IMU pitch/roll rollover margin & gravity-coupled slip
 │   ├── power_budget.py         # MMRTG power budget & wheel-slip energy estimator
@@ -366,6 +378,10 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
     ├── test_kinematics.py
     ├── test_path_planner.py
     ├── test_science_targets.py
+    ├── test_wheel_wear.py
+    ├── test_wheel_wear_cli.py
+    ├── test_solar_thermal.py
+    ├── test_costmap_fusion.py
     ├── test_terramechanics.py
     ├── test_slope_stability.py
     ├── test_power_budget.py

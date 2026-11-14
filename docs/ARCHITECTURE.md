@@ -76,6 +76,9 @@ flowchart TD
 | **Probability Calibrator** | [`src/calibration.py`](../src/calibration.py) | Temperature scaling, ECE scoring, and conformal borderline sand hazard recall overlay. |
 | **Field Report Generator** | [`src/report_generator.py`](../src/report_generator.py) | Self-contained HTML Sol Drive Engineering Field Report compiler. |
 | **A* Path Planner** | [`src/path_planner.py`](../src/path_planner.py) | 8-connected A* heuristic search, obstacle inflation, trajectory rendering. |
+| **Costmap Fusion Engine** | [`src/costmap_fusion.py`](../src/costmap_fusion.py) | Multi-layer AutoNav 2D costmap fusion integrating semantic traversability, slope resistance, uncertainty risk, and ventifact wear. |
+| **Wheel Wear Mechanics** | [`src/wheel_wear.py`](../src/wheel_wear.py) | Ventifact micro-relief roughness, 0.75mm aluminum wheel contact stress, puncture fatigue, and abrasive wear. |
+| **Solar-Thermal Model** | [`src/solar_thermal.py`](../src/solar_thermal.py) | Diurnal solar insolation flux, dust optical depth ($\tau$) extinction, surface temperatures, and survival heater power. |
 | **ROS 2 Bridge** | [`src/ros_bridge.py`](../src/ros_bridge.py) | `OccupancyGrid`, `Path`, `Twist`, and RViz2 `MarkerArray` payload serialization for ROS 2 Nav2. |
 | **Evaluation Suite** | [`src/evaluate.py`](../src/evaluate.py) | Benchmark evaluation against `test_min3` and `test_min1` consensus test sets. |
 | **Error Diagnostics** | [`src/error_analysis.py`](../src/error_analysis.py) | Sand-to-bedrock confusion analysis and diagnostic image generation. |
@@ -97,4 +100,34 @@ $$\text{Cost}(p) = \text{TerrainWeight}(\text{Class}_p) \times \text{MovementDis
 | **2: Sand** | Loose sand dunes & ripples | **18.0** | Extreme penalty. Avoided unless no viable alternative exists. |
 | **3: Big Rock** | Boulders taller than 30 cm | **1000.0** | Lethal obstacle. Inflated by buffer radius to protect rover chassis. |
 | **255: Ignored** | Chassis / distant horizon | **1000.0** | Untraversable boundary. |
+
+### 3.1 Multi-Layer AutoNav Costmap Fusion
+The composite 2D navigation costmap $C(r, c)$ fuses multiple physical and perception layers:
+$$C(r, c) = w_{\text{sem}} C_{\text{base}}(r, c) + w_{\text{slope}} \Delta C_{\text{slope}}(r, c) + w_{\text{uncert}} H(r, c) + w_{\text{wear}} P_{\text{wear}}(r, c) + C_{\text{inflate}}(r, c)$$
+- **Base Semantic Cost:** Maps class IDs using base weights (Bedrock: 1.0, Soil: 2.0, Sand: 18.0, Rock: 1000.0).
+- **Slope Resistance:** Scales with combined pitch and roll tilt magnitude $\|\mathbf{\theta}\|$, penalizing uphill progress towards upper horizon rows.
+- **Uncertainty Buffer:** Shannon entropy $H(r, c)$ adds repulsive potential around borderline decision boundaries.
+- **Ventifact Protection:** When bedrock exhibits sharp micro-relief, adds modest penalty to divert rovers onto smooth regolith.
+- **Obstacle Inflation:** Multi-cell circular dilation around boulders (class 3) enforcing keep-out envelopes for chassis safety.
+
+---
+
+## 4. Curiosity/Perseverance Aluminum Wheel Wear Mechanics
+Curiosity and Perseverance traverse Martian terrain with 0.75 mm thin machined 6061-T6 aluminum wheels. Sharp wind-sculpted ventifacts concentrate rover weight onto 1–3 mm asperities:
+- **Surface Roughness Index:** Discrete spatial gradient magnitude on bedrock and rocks:
+  $$R_{\text{ventifact}} = \text{clip}\left(\frac{\bar{G}_{\text{hard}} - 2.0}{18.0} \times 100, 0, 100\right)$$
+- **Contact Point Stress:**
+  $$\sigma_{\text{contact}} = \sigma_{\text{base}} + \left(\frac{\%_{\text{bedrock}} + 1.5 \%_{\text{rock}}}{100}\right) \left(180 \frac{R}{100} + 45\right) \left(1 + \frac{s}{40} \times 1.5\right)$$
+- **Yield Ratio & Puncture Fatigue:** When $\sigma_{\text{contact}} \ge \sigma_{\text{yield}} = 276.0\,\text{MPa}$, skin yield and puncture fatigue probability spikes, triggering strict traction control.
+- **Abrasive Wear Rate:** Governs skin thinning ($\mu\text{m/km}$) across soft sand polishing (10–25 $\mu\text{m/km}$) vs. razor ventifact gouging (150–500 $\mu\text{m/km}$).
+
+---
+
+## 5. Martian Diurnal Solar Insolation & Thermal Survival Model
+Predicts available optical flux and rover survival heater demand under atmospheric dust:
+- **Beer-Lambert Extinction:** Total surface irradiance at solar elevation $\theta_{\text{elev}}$ and dust opacity $\tau$:
+  $$I_{\text{total}} = S_{\text{Mars}} \sin(\theta_{\text{elev}}) \left[e^{-\tau / \sin(\theta_{\text{elev}})} + 0.28 (1 - e^{-\tau / \sin(\theta_{\text{elev}})}) \frac{1}{1 + 0.3 \tau}\right]$$
+- **Diurnal Surface Temperature:** Cosine diurnal temperature wave with peak at 13:30 LTST, dampened by atmospheric dust scattering.
+- **Battery Survival Heaters:** Automatically calculates electrical draw up to 35 W when effective chassis temperatures fall below $-35^\circ\text{C}$.
+
 
