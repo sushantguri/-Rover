@@ -23,6 +23,9 @@ from src.science_targets import AEGISTargetSelector
 from src.sensor_watchdog import OpticalSensorWatchdog
 from src.calibration import ProbabilityCalibrator
 from src.slope_stability import SlopeStabilityAnalyzer
+from src.wheel_wear import RoverWheelWearModel
+from src.solar_thermal import MartianSolarThermalModel
+from src.costmap_fusion import AutoNavCostmapFuser
 
 # Costmap palette: Bedrock=Cyan/Blue, Soil=Green, Sand=Orange (Hazard), Big Rock=Red (Obstacle)
 COST_PALETTE = np.array([
@@ -66,6 +69,9 @@ class MarsTerrainSegmenter:
         self.sensor_watchdog = OpticalSensorWatchdog()
         self.calibrator = ProbabilityCalibrator()
         self.slope_analyzer = SlopeStabilityAnalyzer()
+        self.wheel_wear_model = RoverWheelWearModel()
+        self.solar_thermal_model = MartianSolarThermalModel()
+        self.costmap_fuser = AutoNavCostmapFuser()
         self.mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
         self.std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
 
@@ -79,7 +85,10 @@ class MarsTerrainSegmenter:
         tta_mode: str = "fast",
         auto_tta: bool = False,
         pitch_deg: float = 0.0,
-        roll_deg: float = 0.0
+        roll_deg: float = 0.0,
+        local_sol_hour: float = 13.5,
+        dust_tau: float = 0.5,
+        solar_elevation_deg: float = 45.0
     ) -> Dict[str, Any]:
         """
         Runs full terrain perception, generates visualizations, and computes drive telemetry.
@@ -208,6 +217,40 @@ class MarsTerrainSegmenter:
             planned_distance_m=20.0
         )
 
+        # Martian Ventifact Roughness & Wheel Wear Fatigue Mechanics
+        gray_frame = np.mean(orig_np, axis=2).astype(np.uint8) if orig_np.ndim == 3 else orig_np
+        ventifact_roughness = self.wheel_wear_model.compute_ventifact_roughness(gray_frame, pred_full)
+        wheel_wear_telemetry = self.wheel_wear_model.evaluate_wheel_wear(
+            terrain_distribution_pct=class_pcts,
+            terramechanics_data=mechanics_telemetry,
+            ventifact_roughness_index=ventifact_roughness,
+            drive_distance_m=20.0,
+        )
+        overlay_wheel_wear = self.wheel_wear_model.render_wear_hazard_overlay(
+            orig_np, pred_full, ventifact_roughness_index=ventifact_roughness, alpha=opacity
+        )
+
+        # Diurnal Solar Insolation, Dust Optical Depth (Tau), & Battery Heater Thermal Model
+        optical_shadow = float(sensor_health.get("underexposed_pct", 5.0))
+        solar_thermal_telemetry = self.solar_thermal_model.evaluate_thermal_environment(
+            local_sol_hour=local_sol_hour,
+            solar_elevation_deg=solar_elevation_deg,
+            tau=dust_tau,
+            optical_shadow_pct=optical_shadow,
+        )
+
+        # Multi-Layer AutoNav Costmap Fusion (Semantic, Slope, Uncertainty, Ventifact Protection)
+        fused_costmap, costmap_fusion_telemetry = self.costmap_fuser.fuse_layers(
+            pred_mask=pred_full,
+            entropy_map=entropy_map,
+            pitch_deg=pitch_deg,
+            roll_deg=roll_deg,
+            ventifact_roughness_index=ventifact_roughness,
+        )
+        overlay_fused_costmap = self.costmap_fuser.render_fused_costmap_overlay(
+            orig_np, fused_costmap, alpha=opacity
+        )
+
         telemetry = {
             "image_dimensions": {"width": orig_w, "height": orig_h},
             "inference_resolution": img_size,
@@ -226,6 +269,9 @@ class MarsTerrainSegmenter:
             "terramechanics": mechanics_telemetry,
             "slope_stability": slope_stability,
             "power_budget": power_telemetry,
+            "wheel_wear": wheel_wear_telemetry,
+            "solar_thermal": solar_thermal_telemetry,
+            "costmap_fusion": costmap_fusion_telemetry,
             "uncertainty": uncertainty_telemetry,
             "calibration_safety": calibration_safety,
             "geometry_risk": geometry_risk,
@@ -237,9 +283,11 @@ class MarsTerrainSegmenter:
             "overlay_multiclass": overlay_multiclass,
             "overlay_sand_hazard": overlay_sand_hazard,
             "overlay_costmap": costmap_overlay,
+            "overlay_fused_costmap": overlay_fused_costmap,
             "overlay_uncertainty": overlay_uncertainty,
             "overlay_zone_radar": overlay_zone_radar,
             "overlay_science_targets": overlay_science_targets,
             "overlay_safety_margin": overlay_safety_margin,
+            "overlay_wheel_wear": overlay_wheel_wear,
             "telemetry": telemetry
         }

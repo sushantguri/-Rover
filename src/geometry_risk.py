@@ -229,10 +229,14 @@ class TerrainGeometryAnalyzer:
         for idx, cluster in enumerate(analysis.get("boulder_clusters", [])[:5], start=1):
             c1, r1, c2, r2 = cluster["bbox_xyxy"]
             box_col = (239, 68, 68, 245) if cluster["in_nearfield"] else (251, 146, 60, 210)
-            draw.rectangle([(c1, r1), (c2, r2)], outline=box_col, width=3)
+            c2_clamped = max(c1, c2)
+            r2_clamped = max(r1, r2)
+            draw.rectangle([(c1, r1), (c2_clamped, r2_clamped)], outline=box_col, width=3)
             tag_y = max(2, r1 - 15)
-            draw.rectangle([(c1, tag_y), (min(w - 2, c1 + 78), tag_y + 14)], fill=(127, 29, 29, 220))
-            draw.text((c1 + 4, tag_y + 2), f"ROCK #{idx}", fill=(255, 255, 255, 255))
+            bx1 = max(0, min(w - 2, c1))
+            bx2 = max(bx1 + 2, min(w, bx1 + 78))
+            draw.rectangle([(bx1, tag_y), (bx2, tag_y + 14)], fill=(127, 29, 29, 220))
+            draw.text((bx1 + 4, tag_y + 2), f"ROCK #{idx}", fill=(255, 255, 255, 255))
 
         combined = Image.alpha_composite(img_pil, overlay).convert("RGB")
         return np.array(combined)

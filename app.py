@@ -27,6 +27,9 @@ from src.science_targets import AEGISTargetSelector
 from src.sensor_watchdog import OpticalSensorWatchdog
 from src.calibration import ProbabilityCalibrator
 from src.slope_stability import SlopeStabilityAnalyzer
+from src.wheel_wear import RoverWheelWearModel
+from src.solar_thermal import MartianSolarThermalModel
+from src.costmap_fusion import AutoNavCostmapFuser
 
 SAMPLE_DIR = "sample_images"
 curated_sample_paths = [
@@ -99,11 +102,24 @@ def make_side_by_side_comparison(orig_np, overlay_np):
     return np.hstack([orig_np, divider, overlay_np])
 
 
-def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_threshold=25.0, tta_mode="disabled", sol_number=4118, pitch_deg=0.0, roll_deg=0.0):
+def segment_mars_terrain(
+    input_image,
+    opacity=0.6,
+    img_size_str="512",
+    sand_threshold=25.0,
+    tta_mode="disabled",
+    sol_number=4118,
+    pitch_deg=0.0,
+    roll_deg=0.0,
+    local_sol_hour=13.5,
+    dust_tau=0.5,
+    solar_elevation_deg=45.0,
+):
     """
     High-fidelity inference pipeline with multi-view outputs, TTA ensemble,
     Bekker-Wong terramechanics, slope stability, conformal safety margins,
-    MMRTG power budget telemetry, and HTML field reports.
+    wheel ventifact fatigue, diurnal solar-thermal modeling,
+    multi-layer Nav2 costmap fusion, and HTML field reports.
     """
     if input_image is None:
         empty_msg = """
@@ -113,7 +129,22 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
             <div style="font-size: 13px; color: #64748b; margin-top: 4px;">Upload a Mars rover image or select a mission sample to initiate terrain telemetry.</div>
         </div>
         """
-        return None, None, None, None, None, None, None, None, None, empty_msg, "", None
+        return (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            empty_msg,
+            "",
+            None,
+        )
 
     t_start = time.time()
     model = load_inference_model()
@@ -297,6 +328,42 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
     science_selector = AEGISTargetSelector(top_k=3)
     science_targets = science_selector.select_targets(pred_np, entropy_map=entropy_map, top_k=3)
     science_targets_view = science_selector.render_target_reticles(orig_np, science_targets)
+
+    # 10. Curiosity/Perseverance 0.75mm Aluminum Wheel Fatigue & Ventifact Mechanics
+    gray_frame = np.mean(orig_np, axis=2).astype(np.uint8) if orig_np.ndim == 3 else orig_np
+    wear_model = RoverWheelWearModel()
+    ventifact_roughness = wear_model.compute_ventifact_roughness(gray_frame, pred_np)
+    wheel_wear = wear_model.evaluate_wheel_wear(
+        terrain_distribution_pct=class_pcts,
+        terramechanics_data=mechanics,
+        ventifact_roughness_index=ventifact_roughness,
+        drive_distance_m=20.0,
+    )
+    wheel_wear_view = wear_model.render_wear_hazard_overlay(
+        orig_np, pred_np, ventifact_roughness_index=ventifact_roughness, alpha=opacity
+    )
+
+    # 11. Diurnal Solar Insolation, Dust Optical Depth (Tau) & Battery Heaters
+    solar_model = MartianSolarThermalModel()
+    solar_thermal = solar_model.evaluate_thermal_environment(
+        local_sol_hour=float(local_sol_hour),
+        solar_elevation_deg=float(solar_elevation_deg),
+        tau=float(dust_tau),
+        optical_shadow_pct=float(sensor_health.get("underexposed_pct", 5.0)),
+    )
+
+    # 12. Multi-Layer AutoNav Costmap Fusion (Semantic + Slope + Uncertainty + Ventifact Wear)
+    costmap_fuser = AutoNavCostmapFuser()
+    fused_costmap, costmap_fusion_telemetry = costmap_fuser.fuse_layers(
+        pred_mask=pred_np,
+        entropy_map=entropy_map,
+        pitch_deg=float(pitch_deg),
+        roll_deg=float(roll_deg),
+        ventifact_roughness_index=ventifact_roughness,
+    )
+    fused_costmap_view = costmap_fuser.render_fused_costmap_overlay(
+        orig_np, fused_costmap, alpha=opacity
+    )
 
     targets_list_html = "".join(
         f"<div style='display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:11.5px;'>"
@@ -547,6 +614,60 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
                 </div>
             </div>
         </div>
+
+        <!-- Wheel Ventifact Wear & Puncture Fatigue -->
+        <div class="telemetry-card">
+            <div class="hud-header">WHEEL VENTIFACT WEAR &amp; PUNCTURE FATIGUE (0.75mm ALUMINUM)</div>
+            <div class="hud-grid">
+                <div class="hud-item">
+                    <div class="hud-label">VENTIFACT ROUGHNESS / STRESS</div>
+                    <div class="hud-val" style="color: {'#ef4444' if wheel_wear['peak_contact_stress_mpa'] >= 276.0 else '#f59e0b' if wheel_wear['peak_contact_stress_mpa'] >= 180.0 else '#10b981'};">
+                        {wheel_wear['ventifact_roughness_index']:.0f}/100 ({wheel_wear['peak_contact_stress_mpa']:.0f} MPa)
+                    </div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">PUNCTURE RISK / 100M</div>
+                    <div class="hud-val" style="color: {'#ef4444' if wheel_wear['puncture_risk_pct'] >= 45.0 else '#f59e0b' if wheel_wear['puncture_risk_pct'] >= 10.0 else '#10b981'};">
+                        {wheel_wear['puncture_risk_pct']:.1f}% ({wheel_wear['wear_status'].split('_')[0]})
+                    </div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">WEAR RATE / LEG LOSS</div>
+                    <div class="hud-val">{wheel_wear['wear_rate_um_per_km']:.0f} μm/km ({wheel_wear['leg_skin_loss_um']:.3f} μm)</div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">TRACTION CONTROL MODE</div>
+                    <div class="hud-val" style="color: #38bdf8;">{wheel_wear['traction_control_mode'].replace('_', ' ')}</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Martian Diurnal Insolation, Dust Tau & Heaters -->
+        <div class="telemetry-card">
+            <div class="hud-header">MARTIAN DIURNAL INSOLATION, DUST TAU &amp; THERMAL HEATERS</div>
+            <div class="hud-grid">
+                <div class="hud-item">
+                    <div class="hud-label">LOCAL SOL TIME / ELEV</div>
+                    <div class="hud-val">{solar_thermal['local_sol_hour']:.1f}h LTST ({solar_thermal['solar_elevation_deg']:.0f}°)</div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">CHASSIS / SURFACE TEMP</div>
+                    <div class="hud-val" style="color: {'#38bdf8' if solar_thermal['effective_chassis_temp_c'] < -50.0 else '#10b981'};">
+                        {solar_thermal['effective_chassis_temp_c']:.1f}°C (Amb {solar_thermal['ambient_surface_temp_c']:.1f}°C)
+                    </div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">TOTAL SOLAR FLUX (TAU={solar_thermal['dust_optical_depth_tau']:.1f})</div>
+                    <div class="hud-val">{solar_thermal['total_solar_flux_w_m2']:.0f} W/m² ({solar_thermal['atmospheric_transmission_pct']:.0f}% trans)</div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">BATTERY SURVIVAL HEATERS</div>
+                    <div class="hud-val" style="color: {'#f59e0b' if solar_thermal['survival_heater_power_w'] > 0.0 else '#10b981'};">
+                        {solar_thermal['survival_heater_power_w']:.1f} W ({solar_thermal['thermal_status'].replace('_', ' ')})
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
     """
 
@@ -558,6 +679,9 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
         "sensor_health": sensor_health,
         "slope_stability": slope_stability,
         "calibration_safety": calibration_safety,
+        "wheel_wear": wheel_wear,
+        "solar_thermal": solar_thermal,
+        "costmap_fusion": costmap_fusion_telemetry,
         "safety_status": safety_status_code,
         "traversability_index": round(traversability, 1),
         "autonomous_drive_action": drive_action_code,
@@ -581,6 +705,8 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
         sol_number=int(sol_number),
         overlay_zone_radar=zone_radar_view,
         overlay_science=science_targets_view,
+        overlay_wheel_wear=wheel_wear_view,
+        overlay_fused_costmap=fused_costmap_view,
     )
     report_path = os.path.join(tempfile.gettempdir(), f"nasa_sol_{int(sol_number)}_field_report.html")
     with open(report_path, "w", encoding="utf-8") as rf:
@@ -597,10 +723,28 @@ def segment_mars_terrain(input_image, opacity=0.6, img_size_str="512", sand_thre
 [UTC {now_utc}] [AEGIS-SCI] Status={science_targets['aegis_status']} | Targets Locked={science_targets['target_count']}
 [UTC {now_utc}] [ATTITUDE-IMU] Status={slope_stability['stability_status']} | Tilt={slope_stability['combined_tilt_deg']:.1f}deg | CoupledSlip={slope_stability['slope_coupled_slip_pct']:.1f}%
 [UTC {now_utc}] [CONFORMAL-SAFE] {calibration_safety['conformal_alert']} | ConservativeSand={calibration_safety['conservative_sand_pct']:.1f}%
+[UTC {now_utc}] [WHEEL-WEAR] Status={wheel_wear['wear_status']} | Roughness={wheel_wear['ventifact_roughness_index']:.0f} | Stress={wheel_wear['peak_contact_stress_mpa']:.0f}MPa | Mode={wheel_wear['traction_control_mode']}
+[UTC {now_utc}] [SOLAR-THERMAL] LTST={solar_thermal['local_sol_hour']:.1f}h | Flux={solar_thermal['total_solar_flux_w_m2']:.0f}W/m2 | Chassis={solar_thermal['effective_chassis_temp_c']:.1f}C | Heaters={solar_thermal['survival_heater_power_w']:.1f}W
+[UTC {now_utc}] [COSTMAP-FUSED] MeanCost={costmap_fusion_telemetry['mean_navigable_cost']:.1f} | Lethal={costmap_fusion_telemetry['lethal_obstacle_pct']:.1f}%
 [UTC {now_utc}] [POWER-MMRTG] {power_budget['power_status']} | 20m Energy={power_budget['traverse_20m_energy_wh']:.1f}Wh | EffSpeed={power_budget['effective_ground_speed_cm_s']:.2f}cm/s
 [UTC {now_utc}] [AUTONAV-PLANNER] Drive Command: {speed_rec} | Mode: {steering_mode} | Sol {int(sol_number)} Report Ready."""
 
-    return overlay_standard, sand_hazard_view, costmap_view, side_by_side_view, trajectory_view, uncertainty_view, zone_radar_view, science_targets_view, safety_margin_view, telemetry_html, flight_log, report_path
+    return (
+        overlay_standard,
+        sand_hazard_view,
+        costmap_view,
+        fused_costmap_view,
+        side_by_side_view,
+        trajectory_view,
+        uncertainty_view,
+        zone_radar_view,
+        science_targets_view,
+        safety_margin_view,
+        wheel_wear_view,
+        telemetry_html,
+        flight_log,
+        report_path,
+    )
 
 
 # High-Tech NASA JPL Dark Glassmorphism CSS
@@ -1004,6 +1148,32 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
                         label="Rover IMU Roll (°)",
                         info="Side-slope tilt angle (JPL 30° max limit)"
                     )
+
+                with gr.Row():
+                    sol_hour_slider = gr.Slider(
+                        minimum=0.0,
+                        maximum=24.66,
+                        value=13.5,
+                        step=0.25,
+                        label="Local Sol Time LTST (hrs)",
+                        info="Peak solar flux ~13.5h; cold pre-dawn ~05.0h"
+                    )
+                    dust_tau_slider = gr.Slider(
+                        minimum=0.1,
+                        maximum=5.0,
+                        value=0.5,
+                        step=0.1,
+                        label="Dust Optical Depth (τ)",
+                        info="0.3: Clear | 0.9: Dusty | 3.0+: Global storm"
+                    )
+                    solar_elevation_slider = gr.Slider(
+                        minimum=-10.0,
+                        maximum=90.0,
+                        value=45.0,
+                        step=5.0,
+                        label="Solar Elevation (°)",
+                        info="Elevation above horizon (sunset <= 0°)"
+                    )
                 
             submit_btn = gr.Button(
                 "🛰️ ANALYZE TERRAIN & COMPUTE TRAVERSABILITY", 
@@ -1029,6 +1199,8 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
                     output_sand = gr.Image(type="numpy", label="Isolated Sand Entrapment Hazard Overlay", height=420)
                 with gr.TabItem("🧭 Traversability Costmap"):
                     output_costmap = gr.Image(type="numpy", label="Autonomous Path-Planning Costmap (A*/D*)", height=420)
+                with gr.TabItem("⚙️ Fused Nav2 Costmap"):
+                    output_fused_costmap = gr.Image(type="numpy", label="Multi-Layer AutoNav Costmap (Semantic + Slope + Uncertainty + Ventifact Wear)", height=420)
                 with gr.TabItem("↔️ Side-by-Side Dual View"):
                     output_sbs = gr.Image(type="numpy", label="Original Rover Photo vs Segmented Classification", height=420)
                 with gr.TabItem("🚀 A* Autonomous Drive Path"):
@@ -1041,6 +1213,8 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
                     output_science = gr.Image(type="numpy", label="Autonomous ChemCam / Mastcam Science Target Reticles", height=420)
                 with gr.TabItem("🛡️ Conformal Sand Margin"):
                     output_safety_margin = gr.Image(type="numpy", label="Calibrated Borderline Sand Recall Margin (Magenta = Sub-threshold Fringe)", height=420)
+                with gr.TabItem("🛞 Wheel Puncture Hazard"):
+                    output_wheel_wear = gr.Image(type="numpy", label="Ventifact Basalt Micro-Relief Wheel Puncture Risk (Ruby Red = Razor Caprock)", height=420)
                     
             # Telemetry Metrics Dashboard
             stats_box = gr.HTML("""
@@ -1088,8 +1262,35 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
     # Interactive Event Binding
     submit_btn.click(
         fn=segment_mars_terrain,
-        inputs=[input_image, opacity_slider, img_size_dropdown, sand_thresh_slider, tta_mode_dropdown, sol_number_input, pitch_slider, roll_slider],
-        outputs=[output_overlay, output_sand, output_costmap, output_sbs, output_path, output_uncertainty, output_zone_radar, output_science, output_safety_margin, stats_box, flight_terminal, report_download]
+        inputs=[
+            input_image,
+            opacity_slider,
+            img_size_dropdown,
+            sand_thresh_slider,
+            tta_mode_dropdown,
+            sol_number_input,
+            pitch_slider,
+            roll_slider,
+            sol_hour_slider,
+            dust_tau_slider,
+            solar_elevation_slider,
+        ],
+        outputs=[
+            output_overlay,
+            output_sand,
+            output_costmap,
+            output_fused_costmap,
+            output_sbs,
+            output_path,
+            output_uncertainty,
+            output_zone_radar,
+            output_science,
+            output_safety_margin,
+            output_wheel_wear,
+            stats_box,
+            flight_terminal,
+            report_download,
+        ],
     )
 
 if __name__ == "__main__":

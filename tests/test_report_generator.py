@@ -87,6 +87,8 @@ class TestMissionReportGenerator(unittest.TestCase):
             sol_number=4125,
             overlay_zone_radar=orig,
             overlay_science=orig,
+            overlay_wheel_wear=orig,
+            overlay_fused_costmap=orig,
         )
 
         self.assertIn("<!DOCTYPE html>", html)
@@ -100,6 +102,55 @@ class TestMissionReportGenerator(unittest.TestCase):
         self.assertIn("SLIGHT_LEFT_ARC", html)
         self.assertIn("38.5 / 100.0", html)
         self.assertIn("84.0 Wh", html)
+
+    def test_generate_html_report_wheel_wear_and_solar_thermal(self):
+        """Verifies report renders wheel fatigue and diurnal solar sections."""
+        img = np.zeros((32, 32, 3), dtype=np.uint8)
+        telemetry = {
+            "safety_status": "NOMINAL_DRIVE",
+            "traversability_index": 92.0,
+            "terrain_distribution_pct": {"soil": 40.0, "bedrock": 60.0, "sand": 0.0, "big rock": 0.0},
+            "wheel_wear": {
+                "ventifact_roughness_index": 45.0,
+                "peak_contact_stress_mpa": 165.2,
+                "aluminum_yield_ratio": 0.60,
+                "puncture_risk_pct": 4.2,
+                "wear_rate_um_per_km": 72.0,
+                "leg_skin_loss_um": 1.44,
+                "wear_status": "NOMINAL_WHEEL_WEAR",
+                "traction_control_mode": "STANDARD_CRUISE_TORQUE",
+            },
+            "solar_thermal": {
+                "local_sol_hour": 13.5,
+                "solar_elevation_deg": 45.0,
+                "dust_optical_depth_tau": 0.5,
+                "ambient_surface_temp_c": -6.0,
+                "effective_chassis_temp_c": -7.2,
+                "total_solar_flux_w_m2": 242.0,
+                "atmospheric_transmission_pct": 58.0,
+                "survival_heater_power_w": 0.0,
+                "thermal_status": "NOMINAL_DAYLIGHT_DRIVE",
+            },
+            "costmap_fusion": {
+                "mean_navigable_cost": 2.4,
+                "lethal_obstacle_pct": 1.2,
+            },
+        }
+
+        html = self.generator.generate_html_report(
+            telemetry=telemetry,
+            orig_img_np=img,
+            overlay_multiclass=img,
+            overlay_sand=img,
+            overlay_wheel_wear=img,
+            overlay_fused_costmap=img,
+            sol_number=4120,
+        )
+        self.assertIn("Wheel Ventifact Mechanics, Diurnal Solar Insolation & Nav2 Costmap Fusion", html)
+        self.assertIn("165.2 MPa", html)
+        self.assertIn("STANDARD_CRUISE_TORQUE", html)
+        self.assertIn("242.0 W/m²", html)
+        self.assertIn("NOMINAL_DAYLIGHT_DRIVE", html)
 
     def test_generate_html_report_nominal_fallback(self):
         """Verifies report handles nominal status and omitted path overlay cleanly."""

@@ -74,7 +74,16 @@ def root():
         "model": "DeepLabV3+ (ResNet-50)",
         "status": "ONLINE",
         "docs_url": "/docs",
-        "endpoints": ["/v1/segment", "/v1/plan", "/v1/science-targets", "/v1/ros2-packet", "/v1/simulate-sol", "/v1/classes"]
+        "endpoints": [
+            "/v1/segment",
+            "/v1/plan",
+            "/v1/science-targets",
+            "/v1/ros2-packet",
+            "/v1/simulate-sol",
+            "/v1/costmap-fusion",
+            "/v1/wheel-wear",
+            "/v1/classes"
+        ]
     }
 
 
@@ -94,12 +103,15 @@ def get_classes():
 @app.post("/v1/segment")
 async def segment_terrain(
     file: UploadFile = File(...),
-    resolution: int = Query(512, ge=256, le=1024, description="Inference resolution"),
+    resolution: int = Query(512, ge=64, le=1024, description="Inference resolution"),
     sand_threshold: float = Query(25.0, ge=5.0, le=50.0, description="Sand emergency halt threshold (%)"),
     use_tta: bool = Query(False, description="Enable multi-view Test-Time Augmentation ensemble"),
     auto_tta: bool = Query(False, description="Automatically enable TTA when optical watchdog detects glare, haze, or dark frames"),
     pitch_deg: float = Query(0.0, ge=-45.0, le=45.0, description="Rover longitudinal pitch angle in degrees"),
     roll_deg: float = Query(0.0, ge=-45.0, le=45.0, description="Rover lateral roll angle in degrees"),
+    local_sol_hour: float = Query(13.5, ge=0.0, le=24.66, description="Martian local true solar time in hours"),
+    dust_tau: float = Query(0.5, ge=0.1, le=6.0, description="Atmospheric dust optical depth tau"),
+    solar_elevation_deg: float = Query(45.0, ge=-20.0, le=90.0, description="Solar elevation angle in degrees"),
     include_base64_overlays: bool = Query(False, description="Whether to include base64-encoded JPEG overlays")
 ):
     try:
@@ -117,6 +129,9 @@ async def segment_terrain(
         auto_tta=auto_tta,
         pitch_deg=pitch_deg,
         roll_deg=roll_deg,
+        local_sol_hour=local_sol_hour,
+        dust_tau=dust_tau,
+        solar_elevation_deg=solar_elevation_deg,
     )
 
     response = {
@@ -128,11 +143,70 @@ async def segment_terrain(
             "multiclass_terrain": encode_image_base64(result["overlay_multiclass"]),
             "sand_hazard_radar": encode_image_base64(result["overlay_sand_hazard"]),
             "traversability_costmap": encode_image_base64(result["overlay_costmap"]),
+            "fused_costmap": encode_image_base64(result["overlay_fused_costmap"]),
             "uncertainty_heatmap": encode_image_base64(result["overlay_uncertainty"]),
             "zone_radar": encode_image_base64(result["overlay_zone_radar"]),
             "science_targets": encode_image_base64(result["overlay_science_targets"]),
-            "safety_margin": encode_image_base64(result["overlay_safety_margin"])
+            "safety_margin": encode_image_base64(result["overlay_safety_margin"]),
+            "wheel_wear": encode_image_base64(result["overlay_wheel_wear"]),
         }
+
+    return JSONResponse(content=response)
+
+
+@app.post("/v1/costmap-fusion")
+async def fuse_costmap(
+    file: UploadFile = File(...),
+    resolution: int = Query(512, ge=64, le=1024, description="Inference resolution"),
+    pitch_deg: float = Query(0.0, ge=-45.0, le=45.0, description="Rover pitch angle in degrees"),
+    roll_deg: float = Query(0.0, ge=-45.0, le=45.0, description="Rover roll angle in degrees"),
+    include_base64_overlay: bool = Query(False, description="Whether to include base64-encoded fused costmap overlay")
+):
+    """Fuses semantic terrain traversability, slope resistance, uncertainty buffers, and ventifact wear into a unified navigation costmap."""
+    try:
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid image format: {e}")
+
+    segmenter = get_segmenter()
+    result = segmenter.predict(image, img_size=resolution, pitch_deg=pitch_deg, roll_deg=roll_deg)
+    
+    response: Dict[str, Any] = {
+        "costmap_fusion": result["telemetry"]["costmap_fusion"],
+        "slope_stability": result["telemetry"]["slope_stability"],
+        "traversability_index": result["telemetry"]["traversability_index"],
+        "safety_status": result["telemetry"]["safety_status"],
+    }
+    if include_base64_overlay:
+        response["fused_costmap_overlay"] = encode_image_base64(result["overlay_fused_costmap"])
+
+    return JSONResponse(content=response)
+
+
+@app.post("/v1/wheel-wear")
+async def evaluate_wheel_wear(
+    file: UploadFile = File(...),
+    resolution: int = Query(512, ge=64, le=1024, description="Inference resolution"),
+    include_base64_overlay: bool = Query(False, description="Whether to include ruby-red wheel wear hazard overlay")
+):
+    """Evaluates Curiosity/Perseverance 0.75 mm aluminum wheel contact stress, ventifact roughness, and puncture risk."""
+    try:
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid image format: {e}")
+
+    segmenter = get_segmenter()
+    result = segmenter.predict(image, img_size=resolution)
+
+    response: Dict[str, Any] = {
+        "wheel_wear": result["telemetry"]["wheel_wear"],
+        "terramechanics": result["telemetry"]["terramechanics"],
+        "safety_status": result["telemetry"]["safety_status"],
+    }
+    if include_base64_overlay:
+        response["wheel_wear_overlay"] = encode_image_base64(result["overlay_wheel_wear"])
 
     return JSONResponse(content=response)
 
@@ -188,7 +262,7 @@ async def plan_trajectory(
 @app.post("/v1/science-targets")
 async def extract_science_targets(
     file: UploadFile = File(...),
-    resolution: int = Query(512, ge=256, le=1024, description="Inference resolution"),
+    resolution: int = Query(512, ge=64, le=1024, description="Inference resolution"),
     include_base64_reticle: bool = Query(False, description="Include base64 optical targeting reticle overlay")
 ):
     """Autonomous NASA AEGIS-style geological science target identification endpoint."""
@@ -214,7 +288,7 @@ async def extract_science_targets(
 @app.post("/v1/ros2-packet")
 async def export_ros2_packet(
     file: UploadFile = File(...),
-    resolution: int = Query(512, ge=256, le=1024, description="Inference resolution"),
+    resolution: int = Query(512, ge=64, le=1024, description="Inference resolution"),
     planning_resolution: int = Query(96, ge=32, le=192, description="OccupancyGrid & A* grid resolution")
 ):
     """Exports serialized ROS 2 Nav2 / rosbridge messages (OccupancyGrid, Path, Twist, MarkerArray)."""

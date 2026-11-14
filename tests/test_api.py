@@ -22,6 +22,8 @@ class TestFastApiEndpoints(unittest.TestCase):
         self.assertEqual(r_root.json()["status"], "ONLINE")
         self.assertIn("/v1/ros2-packet", r_root.json()["endpoints"])
         self.assertIn("/v1/simulate-sol", r_root.json()["endpoints"])
+        self.assertIn("/v1/costmap-fusion", r_root.json()["endpoints"])
+        self.assertIn("/v1/wheel-wear", r_root.json()["endpoints"])
 
         r_classes = self.client.get("/v1/classes")
         self.assertEqual(r_classes.status_code, 200)
@@ -35,7 +37,10 @@ class TestFastApiEndpoints(unittest.TestCase):
         buf.seek(0)
 
         files = {"file": ("test_mars.jpg", buf, "image/jpeg")}
-        resp = self.client.post("/v1/segment?resolution=256&include_base64_overlays=true&pitch_deg=12.0&roll_deg=4.0", files=files)
+        resp = self.client.post(
+            "/v1/segment?resolution=256&include_base64_overlays=true&pitch_deg=12.0&roll_deg=4.0&local_sol_hour=13.5&dust_tau=0.7",
+            files=files,
+        )
 
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
@@ -45,12 +50,18 @@ class TestFastApiEndpoints(unittest.TestCase):
         self.assertIn("zone_radar", data["overlays"])
         self.assertIn("science_targets", data["overlays"])
         self.assertIn("safety_margin", data["overlays"])
+        self.assertIn("fused_costmap", data["overlays"])
+        self.assertIn("wheel_wear", data["overlays"])
         self.assertIn("traversability_index", data["telemetry"])
         self.assertIn("geometry_risk", data["telemetry"])
         self.assertIn("sensor_health", data["telemetry"])
         self.assertIn("slope_stability", data["telemetry"])
         self.assertIn("calibration_safety", data["telemetry"])
+        self.assertIn("wheel_wear", data["telemetry"])
+        self.assertIn("solar_thermal", data["telemetry"])
+        self.assertIn("costmap_fusion", data["telemetry"])
         self.assertEqual(data["telemetry"]["slope_stability"]["pitch_deg"], 12.0)
+        self.assertEqual(data["telemetry"]["solar_thermal"]["dust_optical_depth_tau"], 0.7)
         self.assertEqual(data["telemetry"]["tta_mode"], "disabled")
 
     def test_plan_and_science_targets_endpoints(self):
@@ -139,6 +150,43 @@ class TestFastApiEndpoints(unittest.TestCase):
         self.assertEqual(sim["mission_status"], "SOL_DRIVE_COMPLETED")
         self.assertAlmostEqual(sim["total_distance_m"], 18.0, places=1)
         self.assertEqual(sim["aegis_science_stops"], 1)
+
+    def test_costmap_fusion_endpoint(self):
+        """Verifies /v1/costmap-fusion returns composite cost layer telemetry."""
+        img = Image.fromarray(np.random.randint(50, 200, (64, 64, 3), dtype=np.uint8))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+        buf.seek(0)
+
+        resp = self.client.post(
+            "/v1/costmap-fusion?resolution=256&pitch_deg=8.0&include_base64_overlay=true",
+            files={"file": ("costmap_test.jpg", buf, "image/jpeg")},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("costmap_fusion", data)
+        self.assertIn("slope_stability", data)
+        self.assertIn("fused_costmap_overlay", data)
+        self.assertIn("mean_navigable_cost", data["costmap_fusion"])
+
+    def test_wheel_wear_endpoint(self):
+        """Verifies /v1/wheel-wear returns contact stress and puncture fatigue metrics."""
+        img = Image.fromarray(np.random.randint(50, 200, (64, 64, 3), dtype=np.uint8))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+        buf.seek(0)
+
+        resp = self.client.post(
+            "/v1/wheel-wear?resolution=256&include_base64_overlay=true",
+            files={"file": ("wheel_wear_test.jpg", buf, "image/jpeg")},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("wheel_wear", data)
+        self.assertIn("terramechanics", data)
+        self.assertIn("wheel_wear_overlay", data)
+        self.assertIn("peak_contact_stress_mpa", data["wheel_wear"])
+        self.assertIn("puncture_risk_pct", data["wheel_wear"])
 
 
 if __name__ == "__main__":

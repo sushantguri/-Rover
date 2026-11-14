@@ -26,10 +26,12 @@ class TestInferencePipeline(unittest.TestCase):
             "overlay_multiclass", 
             "overlay_sand_hazard", 
             "overlay_costmap", 
+            "overlay_fused_costmap",
             "overlay_uncertainty", 
             "overlay_zone_radar",
             "overlay_science_targets",
             "overlay_safety_margin",
+            "overlay_wheel_wear",
             "telemetry"
         }
         self.assertTrue(expected_keys.issubset(result.keys()))
@@ -39,10 +41,12 @@ class TestInferencePipeline(unittest.TestCase):
         self.assertEqual(result["overlay_multiclass"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_sand_hazard"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_costmap"].shape, (128, 128, 3))
+        self.assertEqual(result["overlay_fused_costmap"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_uncertainty"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_zone_radar"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_science_targets"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_safety_margin"].shape, (128, 128, 3))
+        self.assertEqual(result["overlay_wheel_wear"].shape, (128, 128, 3))
 
         # 3. Check telemetry schema
         telemetry = result["telemetry"]
@@ -53,6 +57,9 @@ class TestInferencePipeline(unittest.TestCase):
         self.assertIn("terramechanics", telemetry)
         self.assertIn("slope_stability", telemetry)
         self.assertIn("power_budget", telemetry)
+        self.assertIn("wheel_wear", telemetry)
+        self.assertIn("solar_thermal", telemetry)
+        self.assertIn("costmap_fusion", telemetry)
         self.assertIn("uncertainty", telemetry)
         self.assertIn("calibration_safety", telemetry)
         self.assertIn("geometry_risk", telemetry)
@@ -96,6 +103,34 @@ class TestInferencePipeline(unittest.TestCase):
         t_index = result["telemetry"]["traversability_index"]
         self.assertGreaterEqual(t_index, 0.0)
         self.assertLessEqual(t_index, 100.0)
+
+    def test_diurnal_solar_thermal_telemetry(self):
+        """Verifies diurnal solar-thermal model integration in predict()."""
+        dummy_img = Image.new("RGB", (64, 64), color=(140, 120, 100))
+        result = self.segmenter.predict(
+            dummy_img, img_size=64, local_sol_hour=13.5, dust_tau=0.8, solar_elevation_deg=50.0
+        )
+        thermal = result["telemetry"]["solar_thermal"]
+        self.assertEqual(thermal["local_sol_hour"], 13.5)
+        self.assertEqual(thermal["dust_optical_depth_tau"], 0.8)
+        self.assertEqual(thermal["solar_elevation_deg"], 50.0)
+        self.assertGreater(thermal["total_solar_flux_w_m2"], 0.0)
+        self.assertIn("effective_chassis_temp_c", thermal)
+        self.assertIn("survival_heater_power_w", thermal)
+
+    def test_wheel_wear_and_costmap_fusion_telemetry(self):
+        """Verifies wheel fatigue mechanics and fused costmap output in predict()."""
+        dummy_img = Image.new("RGB", (64, 64), color=(160, 130, 90))
+        result = self.segmenter.predict(dummy_img, img_size=64, pitch_deg=10.0, roll_deg=5.0)
+        wear = result["telemetry"]["wheel_wear"]
+        self.assertIn("peak_contact_stress_mpa", wear)
+        self.assertIn("puncture_risk_pct", wear)
+        self.assertIn("traction_control_mode", wear)
+
+        fused = result["telemetry"]["costmap_fusion"]
+        self.assertIn("mean_navigable_cost", fused)
+        self.assertIn("lethal_obstacle_pct", fused)
+        self.assertTrue(fused["slope_cost_active"])
 
 
 if __name__ == "__main__":

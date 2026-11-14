@@ -35,7 +35,9 @@ class MissionReportGenerator:
         path_data: Optional[Dict[str, Any]] = None,
         sol_number: int = 4118,
         overlay_zone_radar: Optional[np.ndarray] = None,
-        overlay_science: Optional[np.ndarray] = None
+        overlay_science: Optional[np.ndarray] = None,
+        overlay_wheel_wear: Optional[np.ndarray] = None,
+        overlay_fused_costmap: Optional[np.ndarray] = None
     ) -> str:
         """
         Compiles complete telemetry and imagery into a polished printable HTML report.
@@ -51,6 +53,9 @@ class MissionReportGenerator:
         sensor = telemetry.get("sensor_health", {})
         slope = telemetry.get("slope_stability", {})
         cal = telemetry.get("calibration_safety", {})
+        wear = telemetry.get("wheel_wear", {})
+        solar = telemetry.get("solar_thermal", {})
+        cost_fus = telemetry.get("costmap_fusion", {})
 
         sensor_row_html = ""
         if sensor:
@@ -91,18 +96,35 @@ class MissionReportGenerator:
         b64_path = _img_to_base64(overlay_path) if overlay_path is not None else b64_multi
 
         extra_img_html = ""
-        if overlay_zone_radar is not None or overlay_science is not None:
-            b64_radar = _img_to_base64(overlay_zone_radar) if overlay_zone_radar is not None else b64_multi
-            b64_sci = _img_to_base64(overlay_science) if overlay_science is not None else b64_orig
-            extra_img_html = f"""
-            <div class="img-box">
-                <img src="data:image/jpeg;base64,{b64_radar}" alt="Near-Field Zone Radar">
-                <div class="img-caption">E. Near-Field Zone & Boulder Risk Radar</div>
-            </div>
-            <div class="img-box">
-                <img src="data:image/jpeg;base64,{b64_sci}" alt="AEGIS Science Targets">
-                <div class="img-caption">F. AEGIS Autonomous Science Target Reticles</div>
-            </div>"""
+        if overlay_zone_radar is not None or overlay_science is not None or overlay_wheel_wear is not None or overlay_fused_costmap is not None:
+            if overlay_zone_radar is not None:
+                b64_radar = _img_to_base64(overlay_zone_radar)
+                extra_img_html += f"""
+                <div class="img-box">
+                    <img src="data:image/jpeg;base64,{b64_radar}" alt="Near-Field Zone Radar">
+                    <div class="img-caption">E. Near-Field Zone & Boulder Risk Radar</div>
+                </div>"""
+            if overlay_science is not None:
+                b64_sci = _img_to_base64(overlay_science)
+                extra_img_html += f"""
+                <div class="img-box">
+                    <img src="data:image/jpeg;base64,{b64_sci}" alt="AEGIS Science Targets">
+                    <div class="img-caption">F. AEGIS Autonomous Science Target Reticles</div>
+                </div>"""
+            if overlay_wheel_wear is not None:
+                b64_wear = _img_to_base64(overlay_wheel_wear)
+                extra_img_html += f"""
+                <div class="img-box">
+                    <img src="data:image/jpeg;base64,{b64_wear}" alt="Ventifact Wheel Wear Hazard">
+                    <div class="img-caption">G. Ventifact Wheel Wear & Puncture Risk</div>
+                </div>"""
+            if overlay_fused_costmap is not None:
+                b64_fused = _img_to_base64(overlay_fused_costmap)
+                extra_img_html += f"""
+                <div class="img-box">
+                    <img src="data:image/jpeg;base64,{b64_fused}" alt="Fused Nav2 Costmap">
+                    <div class="img-caption">H. Multi-Layer Fused Nav2 Costmap</div>
+                </div>"""
 
         advanced_section_html = ""
         if geom or kin or sci:
@@ -129,6 +151,35 @@ class MissionReportGenerator:
                 <table>
                     <tr><th>Target ID</th><th>Class</th><th>Score</th><th>Access</th></tr>
                     {targets_rows}
+                </table>
+            </div>
+        </div>"""
+
+        wear_section_html = ""
+        if wear or solar or cost_fus:
+            wear_section_html = f"""
+        <h2>5. Wheel Ventifact Mechanics, Diurnal Solar Insolation & Nav2 Costmap Fusion</h2>
+        <div class="grid-2">
+            <div class="card">
+                <strong>Curiosity/Perseverance Aluminum Wheel Fatigue</strong>
+                <table>
+                    <tr><th>Mechanics Metric</th><th>Telemetry</th></tr>
+                    <tr><td>Ventifact Roughness Index</td><td>{wear.get('ventifact_roughness_index', 0.0)} / 100</td></tr>
+                    <tr><td>Peak Contact Stress</td><td><strong>{wear.get('peak_contact_stress_mpa', 0.0)} MPa</strong> (Yield Ratio: {wear.get('aluminum_yield_ratio', 0.0)})</td></tr>
+                    <tr><td>Puncture Risk / 100m</td><td><strong>{wear.get('puncture_risk_pct', 0.0)}%</strong> ({wear.get('wear_status', 'NOMINAL')})</td></tr>
+                    <tr><td>Abrasive Wear Rate</td><td>{wear.get('wear_rate_um_per_km', 0.0)} μm/km (Leg: {wear.get('leg_skin_loss_um', 0.0)} μm)</td></tr>
+                    <tr><td>Traction Control Mode</td><td><strong>{wear.get('traction_control_mode', 'N/A')}</strong></td></tr>
+                </table>
+            </div>
+            <div class="card">
+                <strong>Diurnal Solar Insolation & Thermal Survival</strong>
+                <table>
+                    <tr><th>Environmental Factor</th><th>Measurement</th></tr>
+                    <tr><td>Local Sol Time (LTST)</td><td>{solar.get('local_sol_hour', 13.5)} hrs (Elev: {solar.get('solar_elevation_deg', 45.0)}°)</td></tr>
+                    <tr><td>Dust Optical Depth (τ)</td><td><strong>{solar.get('dust_optical_depth_tau', 0.5)}</strong> ({solar.get('thermal_status', 'NOMINAL')})</td></tr>
+                    <tr><td>Ground / Chassis Temp</td><td>{solar.get('ambient_surface_temp_c', -48.0)}°C / {solar.get('effective_chassis_temp_c', -48.0)}°C</td></tr>
+                    <tr><td>Total Solar Insolation</td><td>{solar.get('total_solar_flux_w_m2', 0.0)} W/m² (Trans: {solar.get('atmospheric_transmission_pct', 0.0)}%)</td></tr>
+                    <tr><td>Battery Survival Heaters</td><td><strong>{solar.get('survival_heater_power_w', 0.0)} W</strong></td></tr>
                 </table>
             </div>
         </div>"""
@@ -339,6 +390,7 @@ class MissionReportGenerator:
             </div>
         </div>
         {advanced_section_html}
+        {wear_section_html}
 
         <div class="footer">
             Automated Robotics Perception Report • NASA AI4Mars Terrain Segmentation Framework • DeepLabV3+ ResNet-50
