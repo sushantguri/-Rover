@@ -46,6 +46,9 @@ def run_batch_audit(input_dir: str, output_dir: str, img_size: int = 384, limit:
         geom = t["geometry_risk"]
         pwr = t["power_budget"]
         sci = t["science_targets"]
+        wear = t.get("wheel_wear", {})
+        solar = t.get("solar_thermal", {})
+        fus = t.get("costmap_fusion", {})
 
         plan_data = planner.plan_path(mask, planning_resolution=96)
         kin = kin_planner.profile_trajectory(
@@ -69,6 +72,12 @@ def run_batch_audit(input_dir: str, output_dir: str, img_size: int = 384, limit:
             "steering_maneuver": kin["steering_maneuver"],
             "energy_cost_wh_per_m": pwr["energy_cost_wh_per_m"],
             "power_status": pwr["power_status"],
+            "wheel_wear_status": wear.get("wear_status", "N/A"),
+            "peak_contact_stress_mpa": wear.get("peak_contact_stress_mpa", 0.0),
+            "puncture_risk_pct": wear.get("puncture_risk_pct", 0.0),
+            "solar_flux_w_m2": solar.get("total_solar_flux_w_m2", 0.0),
+            "heater_power_w": solar.get("survival_heater_power_w", 0.0),
+            "mean_nav_cost": fus.get("mean_navigable_cost", 0.0),
             "top_aegis_target": top_target,
             "top_aegis_score": top_score,
         }
