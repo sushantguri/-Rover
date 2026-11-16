@@ -79,6 +79,10 @@ flowchart TD
 | **Costmap Fusion Engine** | [`src/costmap_fusion.py`](../src/costmap_fusion.py) | Multi-layer AutoNav 2D costmap fusion integrating semantic traversability, slope resistance, uncertainty risk, and ventifact wear. |
 | **Wheel Wear Mechanics** | [`src/wheel_wear.py`](../src/wheel_wear.py) | Ventifact micro-relief roughness, 0.75mm aluminum wheel contact stress, puncture fatigue, and abrasive wear. |
 | **Solar-Thermal Model** | [`src/solar_thermal.py`](../src/solar_thermal.py) | Diurnal solar insolation flux, dust optical depth ($\tau$) extinction, surface temperatures, and survival heater power. |
+| **Stereo Geometry Engine** | [`src/stereo_geometry.py`](../src/stereo_geometry.py) | Navcam stereo baseline disparity, metric depth, 3D positive step obstacles (>25cm), negative drop-off trenches (>35cm), and belly ground clearance envelopes. |
+| **Aeolian Drift Model** | [`src/aeolian_drift.py`](../src/aeolian_drift.py) | Boundary-layer wind friction velocity, Bagnold-White sand saltation mass flux, dune lee-side angle of repose ($34^\circ$) slipface avalanche entrapment, and cross-wind heading optimization. |
+| **DSN Telemetry Manager** | [`src/dsn_telemetry.py`](../src/dsn_telemetry.py) | 4-tier flight data packetization (P1–P4), Direct-to-Earth X-band vs. MRO/TGO Electra UHF relay pass link budgets, and LTST orbiter pass scheduling. |
+| **Stereo 3D Audit CLI** | [`scripts/audit_stereo_geometry.py`](../scripts/audit_stereo_geometry.py) | Fleet-wide CLI auditing 3D step hazards and belly ground clearance across navigation imagery. |
 | **ROS 2 Bridge** | [`src/ros_bridge.py`](../src/ros_bridge.py) | `OccupancyGrid`, `Path`, `Twist`, and RViz2 `MarkerArray` payload serialization for ROS 2 Nav2. |
 | **Evaluation Suite** | [`src/evaluate.py`](../src/evaluate.py) | Benchmark evaluation against `test_min3` and `test_min1` consensus test sets. |
 | **Error Diagnostics** | [`src/error_analysis.py`](../src/error_analysis.py) | Sand-to-bedrock confusion analysis and diagnostic image generation. |
@@ -129,5 +133,59 @@ Predicts available optical flux and rover survival heater demand under atmospher
   $$I_{\text{total}} = S_{\text{Mars}} \sin(\theta_{\text{elev}}) \left[e^{-\tau / \sin(\theta_{\text{elev}})} + 0.28 (1 - e^{-\tau / \sin(\theta_{\text{elev}})}) \frac{1}{1 + 0.3 \tau}\right]$$
 - **Diurnal Surface Temperature:** Cosine diurnal temperature wave with peak at 13:30 LTST, dampened by atmospheric dust scattering.
 - **Battery Survival Heaters:** Automatically calculates electrical draw up to 35 W when effective chassis temperatures fall below $-35^\circ\text{C}$.
+
+---
+
+## 6. Navcam Stereo 3D Disparity & Elevation Step Hazard Geometry
+Models the flight-proven stereo camera geometry utilized by Mars Science Laboratory (Curiosity) and Mars 2020 (Perseverance) Navigation Cameras (Navcams):
+- **Stereo Baseline & Disparity:**
+  Given a stereo optical baseline $b = 0.424\,\text{m}$ and focal length $f = 1400\,\text{px}$, pixel disparity $d(r, c)$ maps directly to metric radial range $Z(r, c)$:
+  $$d(r, c) = \frac{f \cdot b}{Z(r, c)}$$
+- **Perspective Elevation Relief:**
+  Differential elevation gradients $\Delta Z$ are calculated using discrete differential Sobel/Scharr operators, scaled by local class density:
+  - Big Rocks (class 3) generate prominent positive vertical step relief ($+15\,\text{cm}$ to $+55\,\text{cm}$).
+  - Sand ripples (class 2) produce soft rolling undulations ($+5\,\text{cm}$ to $+15\,\text{cm}$).
+  - Solid bedrock (class 1) exhibits sharp planar fracture steps.
+- **Flight Safety Step Limits:**
+  - Positive vertical step obstacle threshold: $> 25.0\,\text{cm}$ (critical limit for Curiosity-class 50 cm wheels; exceeds rocker-bogie climbing capability).
+  - Negative drop-off trench threshold: $> 35.0\,\text{cm}$ (extreme tipover / wheel drop risk).
+  - Belly Ground Clearance Envelope: $60.0\,\text{cm}$ nominal chassis clearance; tracks minimum margin to prevent center-underbody high-centering.
+
+---
+
+## 7. Martian Atmospheric Aeolian Sand Saltation & Dune Slipface Mechanics
+Simulates Martian atmospheric boundary layer aeolian sand transport in thin 6 mbar $CO_2$ atmosphere ($\rho \approx 0.015\,\text{kg/m}^3$):
+- **Boundary-Layer Friction Velocity:**
+  $$u_* = \kappa \frac{u(z)}{\ln(z / z_0)}$$
+  where von Kármán constant $\kappa \approx 0.40$, aerodynamic roughness length $z_0 \approx 0.001\,\text{m}$, and $z = 1.6\,\text{m}$ (rover mast anemometer height).
+- **Martian Threshold Saltation Velocity:**
+  Due to low Martian atmospheric density, threshold friction velocity is significantly higher than on Earth:
+  $$u_{*t} \approx 1.45\,\text{m/s} \quad (\approx 20\text{–}25\,\text{m/s at mast height})$$
+- **Bagnold-White Sand Mass Flux:**
+  $$q = C_w \frac{\rho_{\text{atm}}}{g} u_* (u_* - u_{*t})(u_* + u_{*t}) \quad \text{for } u_* > u_{*t}$$
+- **Dune Lee-Side Slipface Avalanche Entrapment:**
+  Active Martian ripples and barchan dunes form unstable lee-side slipfaces at the angle of repose ($\theta_{\text{repose}} \approx 34^\circ$).
+  When the rover travels downwind onto a loose lee slope, sinkage and avalanche entrapment risk escalates dramatically. The slipface risk index is modeled as:
+  $$R_{\text{slip}} = \text{clip}\left(S_{\text{sand}} \times \left(0.40 + 0.60 \times \frac{1 - \cos(\theta_{\text{heading}} - \theta_{\text{wind\_origin}})}{2}\right) \times \left(1 + \frac{q}{5.0}\right), 0, 100\right)$$
+- **Optimal Crossing Heading:** Heading perpendicular to wind streamlines ($\pm 90^\circ$ cross-wind) to traverse dune crests at maximum shear stability.
+
+---
+
+## 8. NASA Deep Space Network (DSN) Multi-Priority Telemetry Link Budget
+Models mission telemetry downlink scheduling across direct-to-Earth (DTE) and proximity relay orbiters:
+- **Priority Queue Hierarchy:**
+  - **P1: Critical Safety & Fault Alerts** ($< 2\,\text{kB}$, mandatory $< 5\,\text{s}$ downlink latency).
+  - **P2: AEGIS Science Target Spectra & Regolith Telemetry** ($5\text{–}20\,\text{kB}$).
+  - **P3: Nav2 Fused Costmaps & A\* Global Waypoint Paths** ($15\text{–}60\,\text{kB}$).
+  - **P4: Compressed Optical Camera Overlays** ($150\text{–}800\,\text{kB}$).
+- **Comms Link Budget:**
+  - **Direct-to-Earth (DTE) X-Band:** Deep Space Network 34m/70m beamwidth, nominal $16\,\text{kbps}$, useful during daytime rover cruise.
+  - **UHF Electra Proximity Relay:**
+    - Mars Reconnaissance Orbiter (**MRO**): $2048\,\text{kbps}$, 480 s pass duration.
+    - Trace Gas Orbiter (**TGO**): $2048\,\text{kbps}$, 540 s pass duration.
+    - 2001 Mars Odyssey (**ODY**): $256\,\text{kbps}$, 600 s pass duration.
+- **Orbiter Overflight Pass Scheduling:**
+  Calculates time to next overhead pass relative to rover Local True Solar Time (LTST), flagging imminent relay windows for buffer staging.
+
 
 

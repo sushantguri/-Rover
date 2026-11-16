@@ -248,8 +248,32 @@ python scripts/audit_wheel_wear.py --input-dir sample_images/ --output-dir outpu
 
 ---
 
-### 13. Production FastAPI REST Microservice & ROS 2 Nav2 Export
-Launch a high-performance REST microservice with automated Swagger API documentation (supports `?use_tta=true`, `?auto_tta=true`, `?pitch_deg=...&roll_deg=...`, `?local_sol_hour=...&dust_tau=...` on `/v1/segment`, steering kinematics on `/v1/plan`, autonomous geological targeting on `/v1/science-targets`, multi-layer costmap fusion on `/v1/costmap-fusion`, wheel fatigue mechanics on `/v1/wheel-wear`, serialized ROS 2 packets on `/v1/ros2-packet`, and multi-leg SoC simulation on `/v1/simulate-sol`):
+### 13. Navcam Stereo 3D Elevation Step Hazard Audit CLI
+Evaluate positive vertical step obstacles (>25cm critical climbing limit), negative drop-off trenches (>35cm rollover risk), stereo disparity ranges ($b=0.424\,\text{m}$, $f=1400\,\text{px}$), and belly ground clearance envelopes (60cm margin) across candidate navigation scenes:
+```bash
+python scripts/audit_stereo_geometry.py --input-dir sample_images/ --output-dir outputs/stereo_audit/ --save-overlays
+```
+
+---
+
+### 14. Martian Atmospheric Aeolian Sand Drift & Dune Slipface Mechanics
+Simulate boundary-layer wind shear in 6 mbar $CO_2$ atmosphere ($\rho \approx 0.015\,\text{kg/m}^3$), threshold saltation friction velocity ($u_{*t} = 1.45\,\text{m/s}$), Bagnold-White sand mass transport flux $q$ ($\text{g}/(\text{m}\cdot\text{s})$), and dune lee-side angle of repose ($34^\circ$) slipface avalanche entrapment risks. Integrated directly into the Gradio Mission Control HUD, FastAPI (`/v1/aeolian-drift`), and batch fleet audit CLI:
+```bash
+python scripts/batch_mission_audit.py --input-dir sample_images/ --output-dir outputs/mission_audit/
+```
+
+---
+
+### 15. NASA Deep Space Network (DSN) & Orbiter Pass Link Budget
+Simulate 4-tier flight data packetization (P1: Critical Safety, P2: Science/AEGIS, P3: Costmaps/Waypoints, P4: Optical Imagery) and calculate link budgets across Direct-to-Earth (DTE) X-Band (16 kbps) vs. MRO/TGO Electra UHF proximity relays (1024–2048 kbps) scheduled relative to rover Local True Solar Time (LTST). Accessible via REST microservice (`GET /v1/dsn-budget` or `POST /v1/dsn-budget`):
+```bash
+curl "http://localhost:8000/v1/dsn-budget?comm_profile=UHF_MRO_RELAY&local_sol_hour=13.5"
+```
+
+---
+
+### 16. Production FastAPI REST Microservice & ROS 2 Nav2 Export
+Launch a high-performance REST microservice with automated Swagger API documentation (supports `?use_tta=true`, `?auto_tta=true`, `?pitch_deg=...&roll_deg=...`, `?local_sol_hour=...&dust_tau=...` on `/v1/segment`, steering kinematics on `/v1/plan`, autonomous geological targeting on `/v1/science-targets`, multi-layer costmap fusion on `/v1/costmap-fusion`, wheel fatigue mechanics on `/v1/wheel-wear`, 3D step obstacles on `/v1/stereo-geometry`, wind saltation flux on `/v1/aeolian-drift`, orbiter pass link budget on `/v1/dsn-budget`, serialized ROS 2 packets on `/v1/ros2-packet`, and multi-leg SoC simulation on `/v1/simulate-sol`):
 ```bash
 uvicorn api:app --host 0.0.0.0 --port 8000 --reload
 
@@ -260,7 +284,7 @@ Interactive API docs available at `http://localhost:8000/docs`.
 
 ---
 
-### 14. Hardware Latency & TTA Ablation Benchmarks
+### 17. Hardware Latency & TTA Ablation Benchmarks
 Benchmark DeepLabV3+ ResNet-50 inference speed across resolutions (256x256, 384x384, 512x512) and quantify single-pass vs. TTA ensemble mIoU/latency trade-offs:
 ```bash
 # Hardware latency profiler
@@ -272,7 +296,7 @@ python scripts/eval_tta.py --split test_min3 --mode fast --max-samples 50
 
 ---
 
-### 15. Edge Robotics Deployment: TorchScript & ONNX Export
+### 18. Edge Robotics Deployment: TorchScript & ONNX Export
 Export the DeepLabV3+ model for low-latency onboard robotic compute (NVIDIA Jetson, Edge TPU, ROS/ROS2 nodes):
 ```bash
 python scripts/export_onnx.py --checkpoint checkpoints/best_deeplabv3plus.pth --output-dir checkpoints/
@@ -280,7 +304,7 @@ python scripts/export_onnx.py --checkpoint checkpoints/best_deeplabv3plus.pth --
 
 ---
 
-### 16. Docker Deployment
+### 19. Docker Deployment
 Launch the entire system inside a containerized environment with zero dependency conflicts:
 ```bash
 docker compose up --build
@@ -289,10 +313,10 @@ Navigate to `http://localhost:7860` to access the Mission Control interface.
 
 ---
 
-### 17. Run Unit & Integration Tests
-Execute the comprehensive test suite verifying dataset loading, metric calculation, model architecture, TTA ensemble, optical sensor watchdog, temperature-scaled conformal sand safety margins, IMU slope stability, Sol SoC mission simulation, inference telemetry, horizon geometry risk, steering kinematics, AEGIS science targeting, wheel wear mechanics, diurnal solar thermal modeling, multi-layer costmap fusion, terramechanics, MMRTG power budgets, uncertainty estimation, HTML mission reports, ROS 2 Nav2 bridge, CLI workflows, and FastAPI endpoints:
+### 20. Run Automated Unit & Integration Test Suite (105 Tests)
+Execute the comprehensive test suite (105 passing tests across 28 test modules) verifying dataset loading, metric calculation, model architecture, TTA ensemble, optical sensor watchdog, temperature-scaled conformal sand safety margins, IMU slope stability, Sol SoC mission simulation, inference telemetry, horizon geometry risk, steering kinematics, AEGIS science targeting, wheel wear mechanics, diurnal solar thermal modeling, multi-layer costmap fusion, 3D stereo step geometry, aeolian wind flux, DSN comms link budgets, terramechanics, MMRTG power budgets, uncertainty estimation, HTML mission reports, ROS 2 Nav2 bridge, CLI workflows, and FastAPI endpoints:
 ```bash
-python -m unittest discover -s tests
+python -m unittest discover -s tests -v
 ```
 
 ---
@@ -330,6 +354,7 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
 ├── scripts/                    # Utility & deployment scripts
 │   ├── predict.py              # Standalone CLI batch prediction & costmap generator
 │   ├── audit_wheel_wear.py     # Fleet aluminum wheel fatigue & ventifact hazard audit CLI
+│   ├── audit_stereo_geometry.py # Navcam stereo 3D elevation step hazard & belly clearance CLI
 │   ├── generate_mission_report.py # Sol Drive Engineering HTML field report CLI
 │   ├── batch_mission_audit.py  # Fleet-wide CSV & JSON perception/kinematics/AEGIS audit
 │   ├── simulate_drive.py       # A* autonomous drive trajectory simulation
@@ -353,6 +378,9 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
 │   ├── wheel_wear.py           # Ventifact micro-relief roughness, contact stress & puncture fatigue
 │   ├── solar_thermal.py        # Diurnal solar insolation flux, dust optical depth & battery heaters
 │   ├── costmap_fusion.py       # Multi-layer AutoNav Nav2 costmap fusion (semantic/slope/uncertainty/wear)
+│   ├── stereo_geometry.py      # Navcam stereo baseline disparity, metric depth & 3D step obstacles
+│   ├── aeolian_drift.py        # Boundary-layer wind saltation flux & dune slipface mechanics
+│   ├── dsn_telemetry.py        # NASA DSN 4-tier telemetry packetizer & orbiter link budget
 │   ├── terramechanics.py       # Bekker-Wong wheel sinkage & drawbar pull model
 │   ├── slope_stability.py      # IMU pitch/roll rollover margin & gravity-coupled slip
 │   ├── power_budget.py         # MMRTG power budget & wheel-slip energy estimator
@@ -367,7 +395,7 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
 │   ├── evaluate.py             # Evaluation on expert test splits
 │   ├── error_analysis.py       # Sand failure mode analysis
 │   └── visualization.py        # Color palettes, overlays, and diagnostic plots
-└── tests/                      # Automated unit & integration test suite
+└── tests/                      # Automated unit & integration test suite (105 tests)
     ├── test_dataset.py
     ├── test_metrics.py
     ├── test_model.py
@@ -382,6 +410,10 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
     ├── test_wheel_wear_cli.py
     ├── test_solar_thermal.py
     ├── test_costmap_fusion.py
+    ├── test_stereo_geometry.py
+    ├── test_aeolian_drift.py
+    ├── test_dsn_telemetry.py
+    ├── test_stereo_cli.py
     ├── test_terramechanics.py
     ├── test_slope_stability.py
     ├── test_power_budget.py
