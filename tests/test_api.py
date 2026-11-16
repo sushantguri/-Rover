@@ -24,6 +24,9 @@ class TestFastApiEndpoints(unittest.TestCase):
         self.assertIn("/v1/simulate-sol", r_root.json()["endpoints"])
         self.assertIn("/v1/costmap-fusion", r_root.json()["endpoints"])
         self.assertIn("/v1/wheel-wear", r_root.json()["endpoints"])
+        self.assertIn("/v1/stereo-geometry", r_root.json()["endpoints"])
+        self.assertIn("/v1/aeolian-drift", r_root.json()["endpoints"])
+        self.assertIn("/v1/dsn-budget", r_root.json()["endpoints"])
 
         r_classes = self.client.get("/v1/classes")
         self.assertEqual(r_classes.status_code, 200)
@@ -52,6 +55,8 @@ class TestFastApiEndpoints(unittest.TestCase):
         self.assertIn("safety_margin", data["overlays"])
         self.assertIn("fused_costmap", data["overlays"])
         self.assertIn("wheel_wear", data["overlays"])
+        self.assertIn("stereo_elevation", data["overlays"])
+        self.assertIn("aeolian_drift", data["overlays"])
         self.assertIn("traversability_index", data["telemetry"])
         self.assertIn("geometry_risk", data["telemetry"])
         self.assertIn("sensor_health", data["telemetry"])
@@ -60,6 +65,9 @@ class TestFastApiEndpoints(unittest.TestCase):
         self.assertIn("wheel_wear", data["telemetry"])
         self.assertIn("solar_thermal", data["telemetry"])
         self.assertIn("costmap_fusion", data["telemetry"])
+        self.assertIn("stereo_geometry", data["telemetry"])
+        self.assertIn("aeolian_drift", data["telemetry"])
+        self.assertIn("dsn_telemetry", data["telemetry"])
         self.assertEqual(data["telemetry"]["slope_stability"]["pitch_deg"], 12.0)
         self.assertEqual(data["telemetry"]["solar_thermal"]["dust_optical_depth_tau"], 0.7)
         self.assertEqual(data["telemetry"]["tta_mode"], "disabled")
@@ -187,6 +195,54 @@ class TestFastApiEndpoints(unittest.TestCase):
         self.assertIn("wheel_wear_overlay", data)
         self.assertIn("peak_contact_stress_mpa", data["wheel_wear"])
         self.assertIn("puncture_risk_pct", data["wheel_wear"])
+
+    def test_stereo_geometry_endpoint(self):
+        """Verifies /v1/stereo-geometry returns 3D step obstacles and elevation relief."""
+        img = Image.fromarray(np.random.randint(50, 200, (64, 64, 3), dtype=np.uint8))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+        buf.seek(0)
+
+        resp = self.client.post(
+            "/v1/stereo-geometry?resolution=256&include_base64_overlay=true",
+            files={"file": ("stereo_test.jpg", buf, "image/jpeg")},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("stereo_geometry", data)
+        self.assertIn("stereo_elevation_overlay", data)
+        self.assertIn("max_positive_step_cm", data["stereo_geometry"])
+        self.assertIn("step_hazard_status", data["stereo_geometry"])
+
+    def test_aeolian_drift_endpoint(self):
+        """Verifies /v1/aeolian-drift returns wind sand flux and slipface risk."""
+        img = Image.fromarray(np.random.randint(50, 200, (64, 64, 3), dtype=np.uint8))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+        buf.seek(0)
+
+        resp = self.client.post(
+            "/v1/aeolian-drift?resolution=256&wind_speed_m_s=15.0&wind_azimuth_deg=270.0&rover_heading_deg=90.0&include_base64_overlay=true",
+            files={"file": ("aeolian_test.jpg", buf, "image/jpeg")},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("aeolian_drift", data)
+        self.assertIn("aeolian_drift_overlay", data)
+        self.assertEqual(data["aeolian_drift"]["wind_speed_m_s"], 15.0)
+        self.assertIn("mass_flux_g_m_s", data["aeolian_drift"])
+        self.assertIn("slipface_risk_index", data["aeolian_drift"])
+
+    def test_dsn_budget_endpoint(self):
+        """Verifies /v1/dsn-budget evaluates orbiter pass link budget and scheduling."""
+        resp = self.client.get("/v1/dsn-budget?comm_profile=UHF_MRO_RELAY&local_sol_hour=14.0&has_overlays=true")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("packets", data)
+        self.assertIn("link_budget", data)
+        self.assertIn("pass_schedule", data)
+        self.assertEqual(data["link_budget"]["comm_profile"], "UHF_MRO_RELAY")
+        self.assertGreater(data["link_budget"]["effective_bitrate_kbps"], 1000.0)
 
 
 if __name__ == "__main__":

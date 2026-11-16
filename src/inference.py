@@ -26,6 +26,9 @@ from src.slope_stability import SlopeStabilityAnalyzer
 from src.wheel_wear import RoverWheelWearModel
 from src.solar_thermal import MartianSolarThermalModel
 from src.costmap_fusion import AutoNavCostmapFuser
+from src.stereo_geometry import RoverStereoGeometryEngine
+from src.aeolian_drift import MartianAeolianDriftModel
+from src.dsn_telemetry import DsnCommManager
 
 # Costmap palette: Bedrock=Cyan/Blue, Soil=Green, Sand=Orange (Hazard), Big Rock=Red (Obstacle)
 COST_PALETTE = np.array([
@@ -72,6 +75,9 @@ class MarsTerrainSegmenter:
         self.wheel_wear_model = RoverWheelWearModel()
         self.solar_thermal_model = MartianSolarThermalModel()
         self.costmap_fuser = AutoNavCostmapFuser()
+        self.stereo_engine = RoverStereoGeometryEngine()
+        self.aeolian_model = MartianAeolianDriftModel()
+        self.dsn_manager = DsnCommManager()
         self.mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
         self.std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
 
@@ -88,7 +94,11 @@ class MarsTerrainSegmenter:
         roll_deg: float = 0.0,
         local_sol_hour: float = 13.5,
         dust_tau: float = 0.5,
-        solar_elevation_deg: float = 45.0
+        solar_elevation_deg: float = 45.0,
+        rover_heading_deg: float = 0.0,
+        wind_speed_m_s: float = 8.0,
+        wind_azimuth_deg: float = 270.0,
+        comm_profile: str = "UHF_MRO_RELAY"
     ) -> Dict[str, Any]:
         """
         Runs full terrain perception, generates visualizations, and computes drive telemetry.
@@ -251,6 +261,46 @@ class MarsTerrainSegmenter:
             orig_np, fused_costmap, alpha=opacity
         )
 
+        # 3D Stereo Disparity & Step Hazard Geometry
+        depth_map = self.stereo_engine.synthesize_metric_depth(pred_full)
+        stereo_hazards = self.stereo_engine.analyze_3d_hazards(pred_full, depth_map)
+        overlay_stereo_elevation = self.stereo_engine.render_elevation_overlay(
+            orig_np, pred_full, depth_map, stereo_hazards["max_positive_step_cm"], alpha=opacity
+        )
+
+        # Martian Atmospheric Aeolian Saltation & Dune Slipface Hazard
+        aeolian_telemetry = self.aeolian_model.evaluate_slipface_hazard(
+            sand_coverage_pct=sand_pct,
+            wind_speed_m_s=wind_speed_m_s,
+            wind_azimuth_deg=wind_azimuth_deg,
+            rover_heading_deg=rover_heading_deg,
+        )
+        overlay_aeolian_drift = self.aeolian_model.render_drift_overlay(
+            orig_np, pred_full, wind_azimuth_deg=wind_azimuth_deg,
+            slipface_risk_index=aeolian_telemetry["slipface_risk_index"], alpha=opacity
+        )
+
+        # Deep Space Network (DSN) / UHF Orbiter Relay Communication Budget
+        packet_batch = self.dsn_manager.packetize_telemetry(
+            {"safety_status": safety_status, "traversability_index": traversability_index},
+            has_overlays=True,
+        )
+        link_budget = self.dsn_manager.evaluate_link_budget(
+            packet_batch=packet_batch, comm_profile=comm_profile
+        )
+        pass_schedule = self.dsn_manager.schedule_next_pass(current_sol_hour=local_sol_hour)
+        dsn_telemetry = {
+            "packets": packet_batch,
+            "link_budget": link_budget,
+            "pass_schedule": pass_schedule,
+        }
+
+        # Step Obstacle Escalation
+        if not stereo_hazards["traverse_permitted"] and safety_status != "CRITICAL_HAZARD":
+            safety_status = "CRITICAL_HAZARD"
+            drive_action = "EMERGENCY_HALT_STEP_HAZARD"
+            recommended_speed_cm_s = 0.0
+
         telemetry = {
             "image_dimensions": {"width": orig_w, "height": orig_h},
             "inference_resolution": img_size,
@@ -272,6 +322,9 @@ class MarsTerrainSegmenter:
             "wheel_wear": wheel_wear_telemetry,
             "solar_thermal": solar_thermal_telemetry,
             "costmap_fusion": costmap_fusion_telemetry,
+            "stereo_geometry": stereo_hazards,
+            "aeolian_drift": aeolian_telemetry,
+            "dsn_telemetry": dsn_telemetry,
             "uncertainty": uncertainty_telemetry,
             "calibration_safety": calibration_safety,
             "geometry_risk": geometry_risk,
@@ -284,6 +337,8 @@ class MarsTerrainSegmenter:
             "overlay_sand_hazard": overlay_sand_hazard,
             "overlay_costmap": costmap_overlay,
             "overlay_fused_costmap": overlay_fused_costmap,
+            "overlay_stereo_elevation": overlay_stereo_elevation,
+            "overlay_aeolian_drift": overlay_aeolian_drift,
             "overlay_uncertainty": overlay_uncertainty,
             "overlay_zone_radar": overlay_zone_radar,
             "overlay_science_targets": overlay_science_targets,

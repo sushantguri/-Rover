@@ -30,6 +30,9 @@ from src.slope_stability import SlopeStabilityAnalyzer
 from src.wheel_wear import RoverWheelWearModel
 from src.solar_thermal import MartianSolarThermalModel
 from src.costmap_fusion import AutoNavCostmapFuser
+from src.stereo_geometry import RoverStereoGeometryEngine
+from src.aeolian_drift import MartianAeolianDriftModel
+from src.dsn_telemetry import DsnCommManager
 
 SAMPLE_DIR = "sample_images"
 curated_sample_paths = [
@@ -114,12 +117,17 @@ def segment_mars_terrain(
     local_sol_hour=13.5,
     dust_tau=0.5,
     solar_elevation_deg=45.0,
+    rover_heading_deg=0.0,
+    wind_speed_m_s=8.0,
+    wind_azimuth_deg=270.0,
+    comm_profile="UHF_MRO_RELAY",
 ):
     """
     High-fidelity inference pipeline with multi-view outputs, TTA ensemble,
     Bekker-Wong terramechanics, slope stability, conformal safety margins,
     wheel ventifact fatigue, diurnal solar-thermal modeling,
-    multi-layer Nav2 costmap fusion, and HTML field reports.
+    3D stereo elevation step hazards, aeolian sand drift physics,
+    multi-layer Nav2 costmap fusion, DSN telemetry link budget, and HTML field reports.
     """
     if input_image is None:
         empty_msg = """
@@ -130,6 +138,8 @@ def segment_mars_terrain(
         </div>
         """
         return (
+            None,
+            None,
             None,
             None,
             None,
@@ -364,6 +374,43 @@ def segment_mars_terrain(
     fused_costmap_view = costmap_fuser.render_fused_costmap_overlay(
         orig_np, fused_costmap, alpha=opacity
     )
+
+    # 13. 3D Stereo Disparity & Metric Step Hazard Geometry
+    stereo_engine = RoverStereoGeometryEngine()
+    depth_map = stereo_engine.synthesize_metric_depth(pred_np)
+    stereo_hazards = stereo_engine.analyze_3d_hazards(pred_np, depth_map)
+    stereo_view = stereo_engine.render_elevation_overlay(
+        orig_np, pred_np, depth_map, stereo_hazards["max_positive_step_cm"], alpha=opacity
+    )
+
+    # 14. Martian Atmospheric Aeolian Saltation & Dune Slipface Hazard
+    aeolian_model = MartianAeolianDriftModel()
+    aeolian_telemetry = aeolian_model.evaluate_slipface_hazard(
+        sand_coverage_pct=sand_pct,
+        wind_speed_m_s=float(wind_speed_m_s),
+        wind_azimuth_deg=float(wind_azimuth_deg),
+        rover_heading_deg=float(rover_heading_deg),
+    )
+    aeolian_view = aeolian_model.render_drift_overlay(
+        orig_np, pred_np, wind_azimuth_deg=float(wind_azimuth_deg),
+        slipface_risk_index=aeolian_telemetry["slipface_risk_index"], alpha=opacity
+    )
+
+    # 15. DSN Telemetry Packetization & Orbiter Pass Link Budget
+    dsn_manager = DsnCommManager()
+    packet_batch = dsn_manager.packetize_telemetry(
+        {"safety_status": safety_status_code, "traversability_index": traversability},
+        has_overlays=True,
+    )
+    link_budget = dsn_manager.evaluate_link_budget(
+        packet_batch=packet_batch, comm_profile=comm_profile
+    )
+    pass_schedule = dsn_manager.schedule_next_pass(current_sol_hour=float(local_sol_hour))
+    dsn_telemetry = {
+        "packets": packet_batch,
+        "link_budget": link_budget,
+        "pass_schedule": pass_schedule,
+    }
 
     targets_list_html = "".join(
         f"<div style='display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:11.5px;'>"
@@ -668,6 +715,58 @@ def segment_mars_terrain(
                 </div>
             </div>
         </div>
+
+        <!-- 3D Stereo Disparity & Step Hazards -->
+        <div class="telemetry-card">
+            <div class="hud-header">3D STEREO DISPARITY &amp; STEP HAZARD RELIEF (NAVCAM 42cm BASELINE)</div>
+            <div class="hud-grid">
+                <div class="hud-item">
+                    <div class="hud-label">MAX STEP HEIGHT</div>
+                    <div class="hud-val" style="color: {'#ef4444' if stereo_hazards['max_positive_step_cm'] >= 25.0 else '#f59e0b' if stereo_hazards['max_positive_step_cm'] >= 15.0 else '#10b981'};">
+                        {stereo_hazards['max_positive_step_cm']:.1f} cm (Limit 25cm)
+                    </div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">TRENCH DROP-OFF DEPTH</div>
+                    <div class="hud-val" style="color: {'#ef4444' if stereo_hazards['max_negative_dropoff_cm'] >= 35.0 else '#10b981'};">
+                        {stereo_hazards['max_negative_dropoff_cm']:.1f} cm
+                    </div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">BELLY CLEARANCE ENVELOPE</div>
+                    <div class="hud-val">{stereo_hazards['belly_clearance_cm']:.1f} cm ({stereo_hazards['clearance_margin_pct']:.0f}% margin)</div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">STEP HAZARD CLASSIFICATION</div>
+                    <div class="hud-val" style="color: #38bdf8;">{stereo_hazards['step_hazard_status'].replace('_', ' ')}</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Aeolian Sand Drift & DSN Link Budget -->
+        <div class="telemetry-card">
+            <div class="hud-header">MARTIAN AEOLIAN SALTATION &amp; DSN RELAY TELEMETRY LINK</div>
+            <div class="hud-grid">
+                <div class="hud-item">
+                    <div class="hud-label">WIND SHEAR / MASS FLUX</div>
+                    <div class="hud-val">{aeolian_telemetry['wind_speed_m_s']:.1f} m/s ({aeolian_telemetry['mass_flux_g_m_s']:.1f} g/m/s)</div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">SLIPFACE AVALANCHE RISK</div>
+                    <div class="hud-val" style="color: {'#ef4444' if aeolian_telemetry['slipface_risk_index'] >= 70.0 else '#f59e0b' if aeolian_telemetry['slipface_risk_index'] >= 35.0 else '#10b981'};">
+                        {aeolian_telemetry['slipface_risk_index']:.1f}/100 ({aeolian_telemetry['aeolian_hazard_level'].split('_')[0]})
+                    </div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">OPTIMAL DUNE CROSSING HEADING</div>
+                    <div class="hud-val">{aeolian_telemetry['optimal_crossing_heading_deg']:.0f}° (Rel {aeolian_telemetry['relative_wind_heading_deg']:.0f}°)</div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">NEXT ORBITER PASS / LINK</div>
+                    <div class="hud-val" style="color: #38bdf8;">{pass_schedule['next_orbiter']} in {pass_schedule['hours_until_pass']:.1f}h ({link_budget['effective_bitrate_kbps']:.0f} kbps)</div>
+                </div>
+            </div>
+        </div>
     </div>
     """
 
@@ -682,6 +781,9 @@ def segment_mars_terrain(
         "wheel_wear": wheel_wear,
         "solar_thermal": solar_thermal,
         "costmap_fusion": costmap_fusion_telemetry,
+        "stereo_geometry": stereo_hazards,
+        "aeolian_drift": aeolian_telemetry,
+        "dsn_telemetry": dsn_telemetry,
         "safety_status": safety_status_code,
         "traversability_index": round(traversability, 1),
         "autonomous_drive_action": drive_action_code,
@@ -707,6 +809,8 @@ def segment_mars_terrain(
         overlay_science=science_targets_view,
         overlay_wheel_wear=wheel_wear_view,
         overlay_fused_costmap=fused_costmap_view,
+        overlay_stereo=stereo_view,
+        overlay_aeolian=aeolian_view,
     )
     report_path = os.path.join(tempfile.gettempdir(), f"nasa_sol_{int(sol_number)}_field_report.html")
     with open(report_path, "w", encoding="utf-8") as rf:
@@ -719,6 +823,9 @@ def segment_mars_terrain(
 [UTC {now_utc}] [INFERENCE] DeepLabV3+ ResNet-50 executed in {latency_ms:.1f}ms on {device_name}
 [UTC {now_utc}] [TELEMETRY] Terrain: Bedrock={bedrock_pct:.1f}%, Soil={soil_pct:.1f}%, Sand={sand_pct:.1f}%, BigRock={rock_pct:.1f}%
 [UTC {now_utc}] [GEOMETRY] NearField Sand={geometry_risk['nearfield_sand_pct']:.1f}% | Clusters={geometry_risk['boulder_cluster_count']} | HighCenterRisk={geometry_risk['high_centering_risk']}
+[UTC {now_utc}] [STEREO-3D] MaxStep={stereo_hazards['max_positive_step_cm']:.1f}cm | Dropoff={stereo_hazards['max_negative_dropoff_cm']:.1f}cm | Status={stereo_hazards['step_hazard_status']}
+[UTC {now_utc}] [AEOLIAN-DRIFT] Wind={aeolian_telemetry['wind_speed_m_s']:.1f}m/s | Flux={aeolian_telemetry['mass_flux_g_m_s']:.1f}g/m/s | SlipfaceRisk={aeolian_telemetry['slipface_risk_index']:.1f}
+[UTC {now_utc}] [DSN-COMM] Profile={comm_profile} | Rate={link_budget['effective_bitrate_kbps']:.0f}kbps | NextPass={pass_schedule['next_orbiter']} in {pass_schedule['hours_until_pass']:.1f}h
 [UTC {now_utc}] [KINEMATICS] Maneuver={kinematics['steering_maneuver']} ({kinematics['initial_heading_deg']:+.1f} deg) | Arc={kinematics['estimated_distance_m']:.1f}m
 [UTC {now_utc}] [AEGIS-SCI] Status={science_targets['aegis_status']} | Targets Locked={science_targets['target_count']}
 [UTC {now_utc}] [ATTITUDE-IMU] Status={slope_stability['stability_status']} | Tilt={slope_stability['combined_tilt_deg']:.1f}deg | CoupledSlip={slope_stability['slope_coupled_slip_pct']:.1f}%
@@ -734,6 +841,8 @@ def segment_mars_terrain(
         sand_hazard_view,
         costmap_view,
         fused_costmap_view,
+        stereo_view,
+        aeolian_view,
         side_by_side_view,
         trajectory_view,
         uncertainty_view,
@@ -1174,6 +1283,40 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
                         label="Solar Elevation (°)",
                         info="Elevation above horizon (sunset <= 0°)"
                     )
+
+                with gr.Row():
+                    heading_slider = gr.Slider(
+                        minimum=0.0,
+                        maximum=360.0,
+                        value=0.0,
+                        step=5.0,
+                        label="Rover Heading Azimuth (°)",
+                        info="0°: North | 90°: East | 180°: South | 270°: West"
+                    )
+                    wind_speed_slider = gr.Slider(
+                        minimum=0.0,
+                        maximum=40.0,
+                        value=8.0,
+                        step=1.0,
+                        label="Martian Wind Speed (m/s)",
+                        info="Curiosity REMS typical 2-15 m/s, saltation threshold ~15-30 m/s"
+                    )
+
+                with gr.Row():
+                    wind_azimuth_slider = gr.Slider(
+                        minimum=0.0,
+                        maximum=360.0,
+                        value=270.0,
+                        step=15.0,
+                        label="Wind Origin Azimuth (°)",
+                        info="Direction from which wind blows (e.g. 270° = Westerly)"
+                    )
+                    comm_profile_dropdown = gr.Dropdown(
+                        choices=["UHF_MRO_RELAY", "UHF_TGO_RELAY", "UHF_ODY_RELAY", "DTE_X_BAND"],
+                        value="UHF_MRO_RELAY",
+                        label="DSN / Orbiter Comms Link",
+                        info="MRO/TGO UHF Electra (1-2 Mbps) vs Direct-to-Earth X-Band (16 kbps)"
+                    )
                 
             submit_btn = gr.Button(
                 "🛰️ ANALYZE TERRAIN & COMPUTE TRAVERSABILITY", 
@@ -1201,6 +1344,10 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
                     output_costmap = gr.Image(type="numpy", label="Autonomous Path-Planning Costmap (A*/D*)", height=420)
                 with gr.TabItem("⚙️ Fused Nav2 Costmap"):
                     output_fused_costmap = gr.Image(type="numpy", label="Multi-Layer AutoNav Costmap (Semantic + Slope + Uncertainty + Ventifact Wear)", height=420)
+                with gr.TabItem("⛰️ 3D Stereo Elevation"):
+                    output_stereo = gr.Image(type="numpy", label="3D Stereo Elevation & Step Hazard Relief (42cm Navcam Baseline)", height=420)
+                with gr.TabItem("💨 Aeolian Sand Drift"):
+                    output_aeolian = gr.Image(type="numpy", label="Atmospheric Wind Saltation & Dune Slipface Vectors", height=420)
                 with gr.TabItem("↔️ Side-by-Side Dual View"):
                     output_sbs = gr.Image(type="numpy", label="Original Rover Photo vs Segmented Classification", height=420)
                 with gr.TabItem("🚀 A* Autonomous Drive Path"):
@@ -1274,12 +1421,18 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
             sol_hour_slider,
             dust_tau_slider,
             solar_elevation_slider,
+            heading_slider,
+            wind_speed_slider,
+            wind_azimuth_slider,
+            comm_profile_dropdown,
         ],
         outputs=[
             output_overlay,
             output_sand,
             output_costmap,
             output_fused_costmap,
+            output_stereo,
+            output_aeolian,
             output_sbs,
             output_path,
             output_uncertainty,

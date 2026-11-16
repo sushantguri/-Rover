@@ -71,6 +71,36 @@ class TestMissionReportGenerator(unittest.TestCase):
                     }
                 ]
             },
+            "stereo_geometry": {
+                "max_positive_step_cm": 28.4,
+                "max_negative_dropoff_cm": 12.1,
+                "belly_clearance_cm": 31.6,
+                "clearance_margin_pct": 52.0,
+                "step_hazard_status": "CRITICAL_STEP_HAZARD",
+            },
+            "aeolian_drift": {
+                "wind_speed_m_s": 14.2,
+                "mass_flux_g_m_s": 6.8,
+                "slipface_risk_index": 72.5,
+                "aeolian_hazard_level": "CRITICAL_SLIPFACE_ENTRAPMENT_RISK",
+                "optimal_crossing_heading_deg": 180.0,
+            },
+            "dsn_telemetry": {
+                "link_budget": {
+                    "comm_profile": "UHF_MRO_RELAY",
+                    "effective_bitrate_kbps": 2048.0,
+                    "est_transfer_time_s": 3.4,
+                    "passes_needed": 1,
+                },
+                "pass_schedule": {
+                    "next_orbiter": "MRO (Mars Reconnaissance Orbiter)",
+                    "hours_until_pass": 1.5,
+                },
+                "packets": {
+                    "total_bytes": 850000,
+                    "priority_counts": {"P1_CRITICAL": 1, "P2_SCIENCE": 1, "P3_COSTMAP": 2, "P4_IMAGE": 3},
+                },
+            },
         }
         path_data = {
             "status": "PATH_FOUND",
@@ -89,6 +119,8 @@ class TestMissionReportGenerator(unittest.TestCase):
             overlay_science=orig,
             overlay_wheel_wear=orig,
             overlay_fused_costmap=orig,
+            overlay_stereo=orig,
+            overlay_aeolian=orig,
         )
 
         self.assertIn("<!DOCTYPE html>", html)
@@ -98,6 +130,10 @@ class TestMissionReportGenerator(unittest.TestCase):
         self.assertIn("Terramechanics & Power Budget", html)
         self.assertIn("Epistemic Uncertainty Audit", html)
         self.assertIn("Horizon Zones, Steering Kinematics & AEGIS Geological Targeting", html)
+        self.assertIn("3D Stereo Step Hazards, Aeolian Sand Transport & DSN Relay Budget", html)
+        self.assertIn("CRITICAL_STEP_HAZARD", html)
+        self.assertIn("CRITICAL_SLIPFACE_ENTRAPMENT_RISK", html)
+        self.assertIn("2048.0 kbps", html)
         self.assertIn("AEGIS-TGT-1", html)
         self.assertIn("SLIGHT_LEFT_ARC", html)
         self.assertIn("38.5 / 100.0", html)

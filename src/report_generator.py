@@ -37,7 +37,9 @@ class MissionReportGenerator:
         overlay_zone_radar: Optional[np.ndarray] = None,
         overlay_science: Optional[np.ndarray] = None,
         overlay_wheel_wear: Optional[np.ndarray] = None,
-        overlay_fused_costmap: Optional[np.ndarray] = None
+        overlay_fused_costmap: Optional[np.ndarray] = None,
+        overlay_stereo: Optional[np.ndarray] = None,
+        overlay_aeolian: Optional[np.ndarray] = None
     ) -> str:
         """
         Compiles complete telemetry and imagery into a polished printable HTML report.
@@ -56,6 +58,9 @@ class MissionReportGenerator:
         wear = telemetry.get("wheel_wear", {})
         solar = telemetry.get("solar_thermal", {})
         cost_fus = telemetry.get("costmap_fusion", {})
+        stereo = telemetry.get("stereo_geometry", {})
+        aeolian = telemetry.get("aeolian_drift", {})
+        dsn = telemetry.get("dsn_telemetry", {})
 
         sensor_row_html = ""
         if sensor:
@@ -125,6 +130,20 @@ class MissionReportGenerator:
                     <img src="data:image/jpeg;base64,{b64_fused}" alt="Fused Nav2 Costmap">
                     <div class="img-caption">H. Multi-Layer Fused Nav2 Costmap</div>
                 </div>"""
+            if overlay_stereo is not None:
+                b64_stereo = _img_to_base64(overlay_stereo)
+                extra_img_html += f"""
+                <div class="img-box">
+                    <img src="data:image/jpeg;base64,{b64_stereo}" alt="3D Stereo Elevation">
+                    <div class="img-caption">I. 3D Stereo Elevation & Step Obstacles</div>
+                </div>"""
+            if overlay_aeolian is not None:
+                b64_aeolian = _img_to_base64(overlay_aeolian)
+                extra_img_html += f"""
+                <div class="img-box">
+                    <img src="data:image/jpeg;base64,{b64_aeolian}" alt="Aeolian Drift Vectors">
+                    <div class="img-caption">J. Aeolian Sand Drift & Dune Slipfaces</div>
+                </div>"""
 
         advanced_section_html = ""
         if geom or kin or sci:
@@ -180,6 +199,37 @@ class MissionReportGenerator:
                     <tr><td>Ground / Chassis Temp</td><td>{solar.get('ambient_surface_temp_c', -48.0)}°C / {solar.get('effective_chassis_temp_c', -48.0)}°C</td></tr>
                     <tr><td>Total Solar Insolation</td><td>{solar.get('total_solar_flux_w_m2', 0.0)} W/m² (Trans: {solar.get('atmospheric_transmission_pct', 0.0)}%)</td></tr>
                     <tr><td>Battery Survival Heaters</td><td><strong>{solar.get('survival_heater_power_w', 0.0)} W</strong></td></tr>
+                </table>
+            </div>
+        </div>"""
+
+        stereo_section_html = ""
+        if stereo or aeolian or dsn:
+            sched = dsn.get("pass_schedule", {})
+            link = dsn.get("link_budget", {})
+            stereo_section_html = f"""
+        <h2>6. 3D Stereo Step Hazards, Aeolian Sand Transport & DSN Relay Budget</h2>
+        <div class="grid-2">
+            <div class="card">
+                <strong>Navcam Stereo 3D Step & Elevation Hazards</strong>
+                <table>
+                    <tr><th>Geometry Metric</th><th>Measurement</th></tr>
+                    <tr><td>Max Step Obstacle Height</td><td><strong>{stereo.get('max_positive_step_cm', 0.0)} cm</strong> (Limit: 25.0 cm)</td></tr>
+                    <tr><td>Max Trench Drop-off Depth</td><td>{stereo.get('max_negative_dropoff_cm', 0.0)} cm (Limit: 35.0 cm)</td></tr>
+                    <tr><td>Belly Clearance Margin</td><td>{stereo.get('belly_clearance_cm', 60.0)} cm ({stereo.get('clearance_margin_pct', 100.0)}% reserve)</td></tr>
+                    <tr><td>Step Hazard Classification</td><td><strong>{stereo.get('step_hazard_status', 'NOMINAL')}</strong></td></tr>
+                    <tr><td>Traverse Safety Clearance</td><td><strong>{'PERMITTED' if stereo.get('traverse_permitted', True) else 'HALTED'}</strong></td></tr>
+                </table>
+            </div>
+            <div class="card">
+                <strong>Aeolian Sand Transport & DSN Orbit Link</strong>
+                <table>
+                    <tr><th>Atmospheric & Comms Metric</th><th>Status</th></tr>
+                    <tr><td>Wind Shear / Friction (u*)</td><td>{aeolian.get('wind_speed_m_s', 8.0)} m/s ({aeolian.get('friction_velocity_m_s', 0.0)} m/s)</td></tr>
+                    <tr><td>Saltation Sand Mass Flux</td><td><strong>{aeolian.get('mass_flux_g_m_s', 0.0)} g/(m·s)</strong> ({aeolian.get('saltation_status', 'STABLE')})</td></tr>
+                    <tr><td>Dune Slipface Avalanche Risk</td><td><strong>{aeolian.get('slipface_risk_index', 0.0)} / 100</strong> ({aeolian.get('aeolian_hazard_level', 'NOMINAL')})</td></tr>
+                    <tr><td>Optimal Dune Crossing Heading</td><td>{aeolian.get('optimal_crossing_heading_deg', 0.0)}° (Rel: {aeolian.get('relative_wind_heading_deg', 0.0)}°)</td></tr>
+                    <tr><td>Next Relay Pass / Bitrate</td><td>{sched.get('next_orbiter', 'MRO')} in {sched.get('hours_until_pass', 0.0)}h ({link.get('effective_bitrate_kbps', 1024.0)} kbps)</td></tr>
                 </table>
             </div>
         </div>"""
@@ -391,6 +441,7 @@ class MissionReportGenerator:
         </div>
         {advanced_section_html}
         {wear_section_html}
+        {stereo_section_html}
 
         <div class="footer">
             Automated Robotics Perception Report • NASA AI4Mars Terrain Segmentation Framework • DeepLabV3+ ResNet-50

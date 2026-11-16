@@ -99,6 +99,7 @@ class DsnCommManager:
 
         return {
             "comm_link_profile": comm_profile,
+            "comm_profile": comm_profile,
             "carrier_frequency": profile["carrier"],
             "effective_bitrate_kbps": round(effective_kbps, 1),
             "pass_duration_s": round(pass_duration_s, 1),

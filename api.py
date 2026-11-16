@@ -19,6 +19,7 @@ from src.path_planner import MarsPathPlanner
 from src.kinematics import RoverKinematicPlanner
 from src.ros_bridge import Ros2NavBridge
 from src.sol_simulator import SolMissionSimulator
+from src.dsn_telemetry import DsnCommManager
 
 app = FastAPI(
     title="NASA JPL Mars Rover AutoNav Perception API",
@@ -82,6 +83,9 @@ def root():
             "/v1/simulate-sol",
             "/v1/costmap-fusion",
             "/v1/wheel-wear",
+            "/v1/stereo-geometry",
+            "/v1/aeolian-drift",
+            "/v1/dsn-budget",
             "/v1/classes"
         ]
     }
@@ -112,6 +116,10 @@ async def segment_terrain(
     local_sol_hour: float = Query(13.5, ge=0.0, le=24.66, description="Martian local true solar time in hours"),
     dust_tau: float = Query(0.5, ge=0.1, le=6.0, description="Atmospheric dust optical depth tau"),
     solar_elevation_deg: float = Query(45.0, ge=-20.0, le=90.0, description="Solar elevation angle in degrees"),
+    rover_heading_deg: float = Query(0.0, ge=0.0, le=360.0, description="Rover heading azimuth in degrees"),
+    wind_speed_m_s: float = Query(8.0, ge=0.0, le=60.0, description="Martian wind speed in m/s"),
+    wind_azimuth_deg: float = Query(270.0, ge=0.0, le=360.0, description="Wind source azimuth in degrees"),
+    comm_profile: str = Query("UHF_MRO_RELAY", description="DSN / Orbiter relay profile"),
     include_base64_overlays: bool = Query(False, description="Whether to include base64-encoded JPEG overlays")
 ):
     try:
@@ -132,6 +140,10 @@ async def segment_terrain(
         local_sol_hour=local_sol_hour,
         dust_tau=dust_tau,
         solar_elevation_deg=solar_elevation_deg,
+        rover_heading_deg=rover_heading_deg,
+        wind_speed_m_s=wind_speed_m_s,
+        wind_azimuth_deg=wind_azimuth_deg,
+        comm_profile=comm_profile,
     )
 
     response = {
@@ -144,6 +156,8 @@ async def segment_terrain(
             "sand_hazard_radar": encode_image_base64(result["overlay_sand_hazard"]),
             "traversability_costmap": encode_image_base64(result["overlay_costmap"]),
             "fused_costmap": encode_image_base64(result["overlay_fused_costmap"]),
+            "stereo_elevation": encode_image_base64(result["overlay_stereo_elevation"]),
+            "aeolian_drift": encode_image_base64(result["overlay_aeolian_drift"]),
             "uncertainty_heatmap": encode_image_base64(result["overlay_uncertainty"]),
             "zone_radar": encode_image_base64(result["overlay_zone_radar"]),
             "science_targets": encode_image_base64(result["overlay_science_targets"]),
@@ -208,6 +222,116 @@ async def evaluate_wheel_wear(
     if include_base64_overlay:
         response["wheel_wear_overlay"] = encode_image_base64(result["overlay_wheel_wear"])
 
+    return JSONResponse(content=response)
+
+
+@app.post("/v1/stereo-geometry")
+async def evaluate_stereo_geometry(
+    file: UploadFile = File(...),
+    resolution: int = Query(512, ge=64, le=1024, description="Inference resolution"),
+    include_base64_overlay: bool = Query(False, description="Whether to include base64-encoded 3D elevation overlay")
+):
+    """Evaluates 3D stereo disparity, positive step obstacles, negative trench drop-offs, and ground clearance."""
+    try:
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid image format: {e}")
+
+    segmenter = get_segmenter()
+    result = segmenter.predict(image, img_size=resolution)
+
+    response: Dict[str, Any] = {
+        "stereo_geometry": result["telemetry"]["stereo_geometry"],
+        "geometry_risk": result["telemetry"]["geometry_risk"],
+        "safety_status": result["telemetry"]["safety_status"],
+    }
+    if include_base64_overlay:
+        response["stereo_elevation_overlay"] = encode_image_base64(result["overlay_stereo_elevation"])
+
+    return JSONResponse(content=response)
+
+
+@app.post("/v1/aeolian-drift")
+async def evaluate_aeolian_drift(
+    file: UploadFile = File(...),
+    resolution: int = Query(512, ge=64, le=1024, description="Inference resolution"),
+    rover_heading_deg: float = Query(0.0, ge=0.0, le=360.0, description="Rover heading azimuth"),
+    wind_speed_m_s: float = Query(8.0, ge=0.0, le=60.0, description="Wind speed in m/s"),
+    wind_azimuth_deg: float = Query(270.0, ge=0.0, le=360.0, description="Wind source azimuth"),
+    include_base64_overlay: bool = Query(False, description="Whether to include base64-encoded aeolian drift overlay")
+):
+    """Evaluates atmospheric wind shear, Bagnold sand saltation flux, and dune slipface avalanche entrapment."""
+    try:
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid image format: {e}")
+
+    segmenter = get_segmenter()
+    result = segmenter.predict(
+        image,
+        img_size=resolution,
+        rover_heading_deg=rover_heading_deg,
+        wind_speed_m_s=wind_speed_m_s,
+        wind_azimuth_deg=wind_azimuth_deg,
+    )
+
+    response: Dict[str, Any] = {
+        "aeolian_drift": result["telemetry"]["aeolian_drift"],
+        "sand_distribution_pct": result["telemetry"]["terrain_distribution_pct"]["sand"],
+        "safety_status": result["telemetry"]["safety_status"],
+    }
+    if include_base64_overlay:
+        response["aeolian_drift_overlay"] = encode_image_base64(result["overlay_aeolian_drift"])
+
+    return JSONResponse(content=response)
+
+
+@app.get("/v1/dsn-budget")
+def query_dsn_budget(
+    comm_profile: str = Query("UHF_MRO_RELAY", description="Orbiter relay / DTE link profile"),
+    local_sol_hour: float = Query(13.5, ge=0.0, le=24.66, description="Local solar time in hours"),
+    has_overlays: bool = Query(True, description="Whether packet queue includes optical overlays")
+):
+    """Query NASA DSN & Mars Relay Orbiter link budget and pass schedule directly."""
+    mgr = DsnCommManager()
+    packets = mgr.packetize_telemetry({"safety_status": "NOMINAL_DRIVE"}, has_overlays=has_overlays)
+    budget = mgr.evaluate_link_budget(packets, comm_profile=comm_profile)
+    sched = mgr.schedule_next_pass(current_sol_hour=local_sol_hour)
+    return JSONResponse(content={
+        "packets": packets,
+        "link_budget": budget,
+        "pass_schedule": sched,
+    })
+
+
+@app.post("/v1/dsn-budget")
+async def evaluate_dsn_budget(
+    file: UploadFile = File(...),
+    resolution: int = Query(512, ge=64, le=1024, description="Inference resolution"),
+    comm_profile: str = Query("UHF_MRO_RELAY", description="Orbiter relay / DTE link profile"),
+    local_sol_hour: float = Query(13.5, ge=0.0, le=24.66, description="Local solar time in hours")
+):
+    """Simulates NASA Deep Space Network (DSN) & Mars Relay Orbiter (MRO/TGO) telemetry downlink budgets."""
+    try:
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid image format: {e}")
+
+    segmenter = get_segmenter()
+    result = segmenter.predict(
+        image,
+        img_size=resolution,
+        comm_profile=comm_profile,
+        local_sol_hour=local_sol_hour,
+    )
+
+    response: Dict[str, Any] = {
+        "dsn_telemetry": result["telemetry"]["dsn_telemetry"],
+        "safety_status": result["telemetry"]["safety_status"],
+    }
     return JSONResponse(content=response)
 
 

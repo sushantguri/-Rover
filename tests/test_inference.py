@@ -27,6 +27,8 @@ class TestInferencePipeline(unittest.TestCase):
             "overlay_sand_hazard", 
             "overlay_costmap", 
             "overlay_fused_costmap",
+            "overlay_stereo_elevation",
+            "overlay_aeolian_drift",
             "overlay_uncertainty", 
             "overlay_zone_radar",
             "overlay_science_targets",
@@ -42,6 +44,8 @@ class TestInferencePipeline(unittest.TestCase):
         self.assertEqual(result["overlay_sand_hazard"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_costmap"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_fused_costmap"].shape, (128, 128, 3))
+        self.assertEqual(result["overlay_stereo_elevation"].shape, (128, 128, 3))
+        self.assertEqual(result["overlay_aeolian_drift"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_uncertainty"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_zone_radar"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_science_targets"].shape, (128, 128, 3))
@@ -64,6 +68,9 @@ class TestInferencePipeline(unittest.TestCase):
         self.assertIn("calibration_safety", telemetry)
         self.assertIn("geometry_risk", telemetry)
         self.assertIn("science_targets", telemetry)
+        self.assertIn("stereo_geometry", telemetry)
+        self.assertIn("aeolian_drift", telemetry)
+        self.assertIn("dsn_telemetry", telemetry)
         self.assertIn("sensor_health", telemetry)
         self.assertIn("sensor_health_status", telemetry["sensor_health"])
         self.assertIn("optical_trust_score", telemetry["sensor_health"])
@@ -131,6 +138,39 @@ class TestInferencePipeline(unittest.TestCase):
         self.assertIn("mean_navigable_cost", fused)
         self.assertIn("lethal_obstacle_pct", fused)
         self.assertTrue(fused["slope_cost_active"])
+
+    def test_stereo_aeolian_and_dsn_telemetry(self):
+        """Verifies 3D stereo step obstacles, aeolian wind flux, and DSN telemetry packetization."""
+        dummy_img = Image.new("RGB", (64, 64), color=(170, 110, 80))
+        result = self.segmenter.predict(
+            dummy_img,
+            img_size=64,
+            rover_heading_deg=45.0,
+            wind_speed_m_s=18.0,
+            wind_azimuth_deg=225.0,
+            comm_profile="UHF_MRO_RELAY",
+        )
+        t = result["telemetry"]
+        # Stereo hazards
+        self.assertIn("stereo_geometry", t)
+        self.assertIn("max_positive_step_cm", t["stereo_geometry"])
+        self.assertIn("max_negative_dropoff_cm", t["stereo_geometry"])
+        self.assertIn("belly_clearance_cm", t["stereo_geometry"])
+        self.assertIn("step_hazard_status", t["stereo_geometry"])
+
+        # Aeolian drift
+        self.assertIn("aeolian_drift", t)
+        self.assertEqual(t["aeolian_drift"]["wind_speed_m_s"], 18.0)
+        self.assertIn("mass_flux_g_m_s", t["aeolian_drift"])
+        self.assertIn("slipface_risk_index", t["aeolian_drift"])
+        self.assertIn("optimal_crossing_heading_deg", t["aeolian_drift"])
+
+        # DSN Comms
+        self.assertIn("dsn_telemetry", t)
+        self.assertEqual(t["dsn_telemetry"]["link_budget"]["comm_profile"], "UHF_MRO_RELAY")
+        self.assertIn("effective_bitrate_kbps", t["dsn_telemetry"]["link_budget"])
+        self.assertIn("pass_schedule", t["dsn_telemetry"])
+        self.assertIn("packets", t["dsn_telemetry"])
 
 
 if __name__ == "__main__":
