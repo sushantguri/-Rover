@@ -49,6 +49,9 @@ def run_batch_audit(input_dir: str, output_dir: str, img_size: int = 384, limit:
         wear = t.get("wheel_wear", {})
         solar = t.get("solar_thermal", {})
         fus = t.get("costmap_fusion", {})
+        stereo = t.get("stereo_geometry", {})
+        aeolian = t.get("aeolian_drift", {})
+        dsn = t.get("dsn_telemetry", {})
 
         plan_data = planner.plan_path(mask, planning_resolution=96)
         kin = kin_planner.profile_trajectory(
@@ -78,6 +81,12 @@ def run_batch_audit(input_dir: str, output_dir: str, img_size: int = 384, limit:
             "solar_flux_w_m2": solar.get("total_solar_flux_w_m2", 0.0),
             "heater_power_w": solar.get("survival_heater_power_w", 0.0),
             "mean_nav_cost": fus.get("mean_navigable_cost", 0.0),
+            "max_step_height_cm": stereo.get("max_positive_step_cm", 0.0),
+            "step_hazard_status": stereo.get("step_hazard_status", "N/A"),
+            "wind_speed_m_s": aeolian.get("wind_speed_m_s", 0.0),
+            "sand_mass_flux_g_m_s": aeolian.get("mass_flux_g_m_s", 0.0),
+            "slipface_risk_index": aeolian.get("slipface_risk_index", 0.0),
+            "dsn_rate_kbps": dsn.get("link_budget", {}).get("effective_bitrate_kbps", 0.0),
             "top_aegis_target": top_target,
             "top_aegis_score": top_score,
         }
