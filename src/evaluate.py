@@ -173,12 +173,15 @@ def main():
             print(f"\n--- {s_name.upper()} ---")
             print(f"{'Metric':<18} | {'All-Soil Baseline':<20} | {'DeepLabV3+':<18} | {'Delta':<12}")
             print("-" * 75)
-            print(f"{'Mean IoU':<18} | {base['mean_iou']*100:>18.2f}% | {res['mean_iou']*100:>16.2f}% | {('+' if res['mean_iou']>=base['mean_iou'] else '') + f'{(res['mean_iou']-base['mean_iou'])*100:.2f}%':>12}")
-            print(f"{'Pixel Accuracy':<18} | {base['pixel_accuracy']*100:>18.2f}% | {res['pixel_accuracy']*100:>16.2f}% | {('+' if res['pixel_accuracy']>=base['pixel_accuracy'] else '') + f'{(res['pixel_accuracy']-base['pixel_accuracy'])*100:.2f}%':>12}")
+            miou_delta_str = f"{(res['mean_iou'] - base['mean_iou']) * 100:+.2f}%"
+            acc_delta_str = f"{(res['pixel_accuracy'] - base['pixel_accuracy']) * 100:+.2f}%"
+            print(f"{'Mean IoU':<18} | {base['mean_iou']*100:>18.2f}% | {res['mean_iou']*100:>16.2f}% | {miou_delta_str:>12}")
+            print(f"{'Pixel Accuracy':<18} | {base['pixel_accuracy']*100:>18.2f}% | {res['pixel_accuracy']*100:>16.2f}% | {acc_delta_str:>12}")
             for c in CLASSES:
                 b_iou = base['per_class_iou'][c]
                 m_iou = res['per_class_iou'][c]
-                print(f"{c + ' IoU':<18} | {b_iou*100:>18.2f}% | {m_iou*100:>16.2f}% | {('+' if m_iou>=b_iou else '') + f'{(m_iou-b_iou)*100:.2f}%':>12}")
+                c_delta_str = f"{(m_iou - b_iou) * 100:+.2f}%"
+                print(f"{c + ' IoU':<18} | {b_iou*100:>18.2f}% | {m_iou*100:>16.2f}% | {c_delta_str:>12}")
 
 
 if __name__ == "__main__":

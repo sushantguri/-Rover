@@ -8,13 +8,16 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    env:
+      MPLBACKEND: Agg
+      PYTHONPATH: .
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     - name: Set up Python 3.11
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v7
       with:
         python-version: '3.11'
         cache: 'pip'
@@ -26,8 +29,8 @@ jobs:
 
     - name: Syntax & Import Verification
       run: |
-        python -m compileall src/ scripts/ tests/ app.py api.py
+        python -m compileall -f src/ scripts/ tests/ app.py api.py
 
     - name: Run Test Suite
       run: |
-        python -m unittest discover -s tests
+        python -m unittest discover -s tests -v
