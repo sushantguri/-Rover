@@ -52,6 +52,9 @@ def run_batch_audit(input_dir: str, output_dir: str, img_size: int = 384, limit:
         stereo = t.get("stereo_geometry", {})
         aeolian = t.get("aeolian_drift", {})
         dsn = t.get("dsn_telemetry", {})
+        vo = t.get("visual_odometry", {})
+        dwa = t.get("dwa_planner", {})
+        dust = t.get("dust_accumulation", {})
 
         plan_data = planner.plan_path(mask, planning_resolution=96)
         kin = kin_planner.profile_trajectory(
@@ -87,6 +90,13 @@ def run_batch_audit(input_dir: str, output_dir: str, img_size: int = 384, limit:
             "sand_mass_flux_g_m_s": aeolian.get("mass_flux_g_m_s", 0.0),
             "slipface_risk_index": aeolian.get("slipface_risk_index", 0.0),
             "dsn_rate_kbps": dsn.get("link_budget", {}).get("effective_bitrate_kbps", 0.0),
+            "vo_confidence_pct": vo.get("vo_confidence_pct", 0.0),
+            "vo_slip_pct": vo.get("wheel_slip_pct", 0.0),
+            "vo_status": vo.get("vo_status", "N/A"),
+            "dwa_steer_action": dwa.get("steer_action", "N/A"),
+            "dwa_speed_cm_s": dwa.get("selected_v_cm_s", 0.0),
+            "dust_transmittance_pct": dust.get("optical_transmittance_pct", 100.0),
+            "dust_thickness_um": dust.get("dust_thickness_um", 0.0),
             "top_aegis_target": top_target,
             "top_aegis_score": top_score,
         }
