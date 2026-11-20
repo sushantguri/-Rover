@@ -179,6 +179,9 @@ Open `http://localhost:7860` in your browser to launch the **NASA JPL Mission Co
 - **🔮 Prediction Uncertainty Heatmap:** Normalized Shannon entropy overlay identifying optical glare, boundary ambiguity, and shadowing artifacts.
 - **📡 Near-Field Zone Radar:** Separates Navcam depth zones into Immediate (0–5 m), Mid-Range (5–15 m), and Horizon (15–30 m), with connected-component boulder cluster boxes and chassis high-centering risk alerts.
 - **🎯 AEGIS Science Targets:** Autonomous Mastcam/ChemCam geological target prioritizer ranking exposed bedrock outcrops, stratigraphic boundaries, and safe float rocks with optical targeting reticles.
+- **🎯 Visual Odometry (VO) Slip Tracking:** FAST/gradient peak visual keypoint tracking, ground displacement measurement, and wheel slip estimation $s = 1 - d_{\text{VO}}/d_{\text{wheel}}$, identifying sand ripple slip deception.
+- **🔄 DWA Reactive Trajectories:** Dynamic Window Approach local collision avoidance rolling out circular arcs within velocity/acceleration limits ($\dot{v} \le 2\,\text{cm/s}^2, \dot{\omega} \le 6^\circ/\text{s}^2$) with obstacle clearance scoring.
+- **🌫️ Optical Lens Dust:** Sol-by-sol atmospheric dust settling ($0.18\%/\text{sol}$ scaled by $\tau$), optical window transmittance degradation $T_{\text{opt}}$, dust layer thickness (microns), and convective vortex cleaning probability.
 - **🛡️ Conformal Sand Margin:** Temperature-scaled probability calibration highlighting sub-threshold thin-dust veneers over bedrock (`CALIBRATED_NOMINAL` / `BORDERLINE_SAND_DETECTED` / `CONSERVATIVE_SAND_ESCALATION`).
 - **📊 Real-Time Telemetry HUD:**
   - Dynamic Drive Safety Status Banner (`🟢 DRIVE PERMITTED`, `🟡 CAUTION ADVISORY`, `🔴 EMERGENCY HALT & REPLAN`).
@@ -272,8 +275,16 @@ curl "http://localhost:8000/v1/dsn-budget?comm_profile=UHF_MRO_RELAY&local_sol_h
 
 ---
 
-### 16. Production FastAPI REST Microservice & ROS 2 Nav2 Export
-Launch a high-performance REST microservice with automated Swagger API documentation (supports `?use_tta=true`, `?auto_tta=true`, `?pitch_deg=...&roll_deg=...`, `?local_sol_hour=...&dust_tau=...` on `/v1/segment`, steering kinematics on `/v1/plan`, autonomous geological targeting on `/v1/science-targets`, multi-layer costmap fusion on `/v1/costmap-fusion`, wheel fatigue mechanics on `/v1/wheel-wear`, 3D step obstacles on `/v1/stereo-geometry`, wind saltation flux on `/v1/aeolian-drift`, orbiter pass link budget on `/v1/dsn-budget`, serialized ROS 2 packets on `/v1/ros2-packet`, and multi-leg SoC simulation on `/v1/simulate-sol`):
+### 16. Visual Odometry (VO) Slip & Feature Grounding Audit CLI
+Audit visual feature displacements, grounding in firm bedrock/soil vs deceptive sand ripples, true ground travel $d_{\text{VO}}$, wheel slip ratio, and export multi-color tracking vector overlays:
+```bash
+python scripts/audit_visual_odometry.py --input sample_images/ --output-dir outputs/vo_audit/ --commanded-distance 1.0 --save-overlays
+```
+
+---
+
+### 17. Production FastAPI REST Microservice & ROS 2 Nav2 Export
+Launch a high-performance REST microservice with automated Swagger API documentation (supports `?use_tta=true`, `?auto_tta=true`, `?pitch_deg=...&roll_deg=...`, `?local_sol_hour=...&dust_tau=...` on `/v1/segment`, steering kinematics on `/v1/plan`, autonomous geological targeting on `/v1/science-targets`, multi-layer costmap fusion on `/v1/costmap-fusion`, wheel fatigue mechanics on `/v1/wheel-wear`, 3D step obstacles on `/v1/stereo-geometry`, wind saltation flux on `/v1/aeolian-drift`, orbiter pass link budget on `/v1/dsn-budget`, visual odometry on `/v1/visual-odometry`, DWA reactive planning on `/v1/dwa-plan`, lens dust settling on `/v1/dust-accumulation`, serialized ROS 2 packets on `/v1/ros2-packet`, and multi-leg SoC simulation on `/v1/simulate-sol`):
 ```bash
 uvicorn api:app --host 0.0.0.0 --port 8000 --reload
 
@@ -284,7 +295,7 @@ Interactive API docs available at `http://localhost:8000/docs`.
 
 ---
 
-### 17. Hardware Latency & TTA Ablation Benchmarks
+### 18. Hardware Latency & TTA Ablation Benchmarks
 Benchmark DeepLabV3+ ResNet-50 inference speed across resolutions (256x256, 384x384, 512x512) and quantify single-pass vs. TTA ensemble mIoU/latency trade-offs:
 ```bash
 # Hardware latency profiler
@@ -296,7 +307,7 @@ python scripts/eval_tta.py --split test_min3 --mode fast --max-samples 50
 
 ---
 
-### 18. Edge Robotics Deployment: TorchScript & ONNX Export
+### 19. Edge Robotics Deployment: TorchScript & ONNX Export
 Export the DeepLabV3+ model for low-latency onboard robotic compute (NVIDIA Jetson, Edge TPU, ROS/ROS2 nodes):
 ```bash
 python scripts/export_onnx.py --checkpoint checkpoints/best_deeplabv3plus.pth --output-dir checkpoints/
@@ -304,7 +315,7 @@ python scripts/export_onnx.py --checkpoint checkpoints/best_deeplabv3plus.pth --
 
 ---
 
-### 19. Docker Deployment
+### 20. Docker Deployment
 Launch the entire system inside a containerized environment with zero dependency conflicts:
 ```bash
 docker compose up --build
@@ -313,8 +324,8 @@ Navigate to `http://localhost:7860` to access the Mission Control interface.
 
 ---
 
-### 20. Run Automated Unit & Integration Test Suite (105 Tests)
-Execute the comprehensive test suite (105 passing tests across 28 test modules) verifying dataset loading, metric calculation, model architecture, TTA ensemble, optical sensor watchdog, temperature-scaled conformal sand safety margins, IMU slope stability, Sol SoC mission simulation, inference telemetry, horizon geometry risk, steering kinematics, AEGIS science targeting, wheel wear mechanics, diurnal solar thermal modeling, multi-layer costmap fusion, 3D stereo step geometry, aeolian wind flux, DSN comms link budgets, terramechanics, MMRTG power budgets, uncertainty estimation, HTML mission reports, ROS 2 Nav2 bridge, CLI workflows, and FastAPI endpoints:
+### 21. Run Automated Unit & Integration Test Suite (126 Tests)
+Execute the comprehensive test suite (126 passing tests across 32 test modules) verifying dataset loading, metric calculation, model architecture, TTA ensemble, optical sensor watchdog, temperature-scaled conformal sand safety margins, IMU slope stability, Sol SoC mission simulation, inference telemetry, horizon geometry risk, steering kinematics, AEGIS science targeting, wheel wear mechanics, diurnal solar thermal modeling, multi-layer costmap fusion, 3D stereo step geometry, aeolian wind flux, DSN comms link budgets, visual odometry feature slip, DWA local reactive steering, lens dust deposition, terramechanics, MMRTG power budgets, uncertainty estimation, HTML mission reports, ROS 2 Nav2 bridge, CLI workflows, and FastAPI endpoints:
 ```bash
 python -m unittest discover -s tests -v
 ```
@@ -353,6 +364,7 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
 ├── sample_images/              # 18 curated Mars rover testing images
 ├── scripts/                    # Utility & deployment scripts
 │   ├── predict.py              # Standalone CLI batch prediction & costmap generator
+│   ├── audit_visual_odometry.py # Visual odometry feature tracking & wheel slip audit CLI
 │   ├── audit_wheel_wear.py     # Fleet aluminum wheel fatigue & ventifact hazard audit CLI
 │   ├── audit_stereo_geometry.py # Navcam stereo 3D elevation step hazard & belly clearance CLI
 │   ├── generate_mission_report.py # Sol Drive Engineering HTML field report CLI
@@ -381,6 +393,9 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
 │   ├── stereo_geometry.py      # Navcam stereo baseline disparity, metric depth & 3D step obstacles
 │   ├── aeolian_drift.py        # Boundary-layer wind saltation flux & dune slipface mechanics
 │   ├── dsn_telemetry.py        # NASA DSN 4-tier telemetry packetizer & orbiter link budget
+│   ├── visual_odometry.py      # VO feature displacements, grounding & wheel slip compensation
+│   ├── dwa_local_planner.py    # Dynamic Window Approach reactive local obstacle avoidance
+│   ├── dust_accumulation.py    # Diurnal dust settling rate, lens transmittance & clearing vortices
 │   ├── terramechanics.py       # Bekker-Wong wheel sinkage & drawbar pull model
 │   ├── slope_stability.py      # IMU pitch/roll rollover margin & gravity-coupled slip
 │   ├── power_budget.py         # MMRTG power budget & wheel-slip energy estimator
@@ -395,7 +410,7 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
 │   ├── evaluate.py             # Evaluation on expert test splits
 │   ├── error_analysis.py       # Sand failure mode analysis
 │   └── visualization.py        # Color palettes, overlays, and diagnostic plots
-└── tests/                      # Automated unit & integration test suite (105 tests)
+└── tests/                      # Automated unit & integration test suite (126 tests)
     ├── test_dataset.py
     ├── test_metrics.py
     ├── test_model.py
@@ -414,6 +429,10 @@ A complete, self-contained notebook is available at [`notebooks/mars_rover_terra
     ├── test_aeolian_drift.py
     ├── test_dsn_telemetry.py
     ├── test_stereo_cli.py
+    ├── test_visual_odometry.py
+    ├── test_dwa_planner.py
+    ├── test_dust_accumulation.py
+    ├── test_vo_cli.py
     ├── test_terramechanics.py
     ├── test_slope_stability.py
     ├── test_power_budget.py

@@ -82,6 +82,10 @@ flowchart TD
 | **Stereo Geometry Engine** | [`src/stereo_geometry.py`](../src/stereo_geometry.py) | Navcam stereo baseline disparity, metric depth, 3D positive step obstacles (>25cm), negative drop-off trenches (>35cm), and belly ground clearance envelopes. |
 | **Aeolian Drift Model** | [`src/aeolian_drift.py`](../src/aeolian_drift.py) | Boundary-layer wind friction velocity, Bagnold-White sand saltation mass flux, dune lee-side angle of repose ($34^\circ$) slipface avalanche entrapment, and cross-wind heading optimization. |
 | **DSN Telemetry Manager** | [`src/dsn_telemetry.py`](../src/dsn_telemetry.py) | 4-tier flight data packetization (P1–P4), Direct-to-Earth X-band vs. MRO/TGO Electra UHF relay pass link budgets, and LTST orbiter pass scheduling. |
+| **Visual Odometry Model** | [`src/visual_odometry.py`](../src/visual_odometry.py) | FAST/gradient peak visual feature tracking, terrain class anchor grounding, visual ground displacement measurement, and wheel slip compensation. |
+| **DWA Local Planner** | [`src/dwa_local_planner.py`](../src/dwa_local_planner.py) | Dynamic Window Approach velocity search window, circular arc lookahead rollouts, clearance scoring, and reactive local collision avoidance. |
+| **Dust Accumulation Model** | [`src/dust_accumulation.py`](../src/dust_accumulation.py) | Diurnal dust settling rate, optical window transmittance degradation, contrast loss, and convective vortex ("dust devil") cleaning resets. |
+| **VO Slip Audit CLI** | [`scripts/audit_visual_odometry.py`](../scripts/audit_visual_odometry.py) | Standalone CLI auditing visual keypoint tracking, wheel slip ratios, and annotated vector overlays across flight imagery. |
 | **Stereo 3D Audit CLI** | [`scripts/audit_stereo_geometry.py`](../scripts/audit_stereo_geometry.py) | Fleet-wide CLI auditing 3D step hazards and belly ground clearance across navigation imagery. |
 | **ROS 2 Bridge** | [`src/ros_bridge.py`](../src/ros_bridge.py) | `OccupancyGrid`, `Path`, `Twist`, and RViz2 `MarkerArray` payload serialization for ROS 2 Nav2. |
 | **Evaluation Suite** | [`src/evaluate.py`](../src/evaluate.py) | Benchmark evaluation against `test_min3` and `test_min1` consensus test sets. |
@@ -186,6 +190,60 @@ Models mission telemetry downlink scheduling across direct-to-Earth (DTE) and pr
     - 2001 Mars Odyssey (**ODY**): $256\,\text{kbps}$, 600 s pass duration.
 - **Orbiter Overflight Pass Scheduling:**
   Calculates time to next overhead pass relative to rover Local True Solar Time (LTST), flagging imminent relay windows for buffer staging.
+
+---
+
+## 9. Visual Odometry (VO) Feature Grounding & Slip Compensation
+Mars rovers like Opportunity, Curiosity, and Perseverance rely on visual odometry to detect insidious wheel slip where wheel encoders continue turning while the vehicle remains stationary (such as during Spirit's entrapment at Troy).
+- **Terrain-Grounded Feature Extraction:**
+  Keypoints are extracted from local spatial gradient peaks across the navigation frame and grounded against neural semantic masks:
+  - **Bedrock (Class 1):** Solid rock anchor features assigned maximum trust ($w = 1.00$).
+  - **Soil (Class 0):** Compact regolith features assigned high trust ($w = 0.85$).
+  - **Sand (Class 2):** Loose ripple features down-weighted to low trust ($w = 0.20$), because aeolian saltation and rolling sand particles create false slip illusions.
+- **Visual Ground Displacement:**
+  Tracks true displacement over commanded wheel revolution distance $d_{\text{wheel}}$:
+  $$d_{\text{VO}} = d_{\text{wheel}} \cdot (1 - s_{\text{eff}})$$
+- **Wheel Slip Estimation & Error Delta:**
+  $$s = \max\left(0.0, 1.0 - \frac{d_{\text{VO}}}{d_{\text{wheel}}}\right) \times 100\%$$
+  $$\Delta d = d_{\text{wheel}} - d_{\text{VO}}$$
+- **Safety Tripwire Escalation:**
+  - $s \ge 40\%$: Triggers `CRITICAL_WHEEL_SLIPPAGE`, forcing autonomous halt and route replan.
+  - $s \ge 20\%$: Triggers `MODERATE_SLIP_CAUTION`, engaging slow creep drive mode.
+  - Sand feature dominance ($>60\%$ sand keypoints): Flags `VO_SAND_DECEPTION_WARNING` advisory.
+
+---
+
+## 10. Dynamic Window Approach (DWA) Reactive Collision Avoidance Planner
+While $A^*$ generates global waypoints across the full 30 m horizon, the onboard flight computer evaluates local reactive trajectories at 5 Hz using the Dynamic Window Approach (Fox et al., 1997) parameterized for slow planetary rovers ($v_{\max} = 4.5\,\text{cm/s}$):
+- **Velocity Search Space & Dynamic Window:**
+  Constrained by rover actuator motor acceleration limits ($\dot{v} \le 2.0\,\text{cm/s}^2, \dot{\omega} \le 6.0^\circ/\text{s}^2$):
+  $$V_d = [v_c - \dot{v}\Delta t, v_c + \dot{v}\Delta t] \cap [-\dot{\omega}\Delta t, \dot{\omega}\Delta t] \cap [0, v_{\max}] \times [-\omega_{\max}, \omega_{\max}]$$
+- **Circular Arc Rollouts & Near-Field Lookahead:**
+  Simulates circular arc forward integration parameterized across lookahead distance ($L = 3.5\,\text{m}$) using trajectory curvature $\kappa = \omega / v$:
+  $$x(s) = \frac{1}{\kappa} \sin(\kappa s), \quad y(s) = \frac{1}{\kappa} (1 - \cos(\kappa s)) \quad (\text{for } \kappa \ne 0)$$
+- **Multi-Objective Cost Evaluation:**
+  $$G(v, \omega) = \alpha \cdot \text{heading\_score}(v, \omega) + \beta \cdot \text{clearance\_score}(v, \omega) + \gamma \cdot \text{velocity\_score}(v)$$
+  where $\alpha = 0.40, \beta = 0.45, \gamma = 0.15$.
+  Any trajectory arc that intersects Big Rocks (Class 3) or dense Sand Dunes (Class 2) is assigned an immediate veto score of $-100.0$ and discarded.
+- **Steer Actions:**
+  Generates discrete command actions: `FORWARD_NOMINAL`, `STEER_GENTLE_RIGHT`, `STEER_HARD_LEFT`, `SLOW_CREEP_AVOIDANCE`, or `HALT_NO_ADMISSIBLE_PATH`.
+
+---
+
+## 11. Diurnal Martian Atmospheric Dust Deposition & Lens Transmittance Degradation
+Atmospheric dust settling is a primary degradation mechanism for Mars surface missions (responsible for the termination of InSight, Opportunity, and Spirit).
+- **Sol-by-Sol Settling Rate:**
+  Base settling rate $r_0 = 0.18\%/\text{sol}$ scaled by prevailing atmospheric optical depth $\tau$:
+  $$r_{\text{dust}} = r_0 \times \left(1.0 + 0.6 \frac{\tau - 0.5}{1.0}\right)$$
+- **Beer-Lambert Lens Transmittance Decay:**
+  $$T_{\text{opt}}(\Delta\text{sol}) = T_0 \cdot \exp(-0.0028 \cdot \Delta\text{sol})$$
+- **Dust Layer Thickness & Contrast Attenuation:**
+  Tracks accumulated dust layer thickness in microns ($\mu\text{m}$) and models forward scattering veiling glare that reduces image contrast:
+  $$C_{\text{loss}} = \text{clip}\left(\frac{\text{thickness}_{\mu\text{m}}}{2.5} \times 100\%, 0\%, 80\%\right)$$
+- **Convective Cleaning Vortex ("Dust Devil") Probability:**
+  Evaluates probability of an atmospheric convective vortex sweeping the rover deck and clearing optics:
+  $$P_{\text{vortex}} = \text{clip}\left(1.5\% \times \left(\frac{u_{\text{wind}}}{10.0}\right) \times \left(\frac{1.0}{\tau}\right), 0.1\%, 12.0\%\right)$$
+
 
 
 
