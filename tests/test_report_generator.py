@@ -207,6 +207,56 @@ class TestMissionReportGenerator(unittest.TestCase):
         self.assertIn("NOMINAL DRIVE", html)
         self.assertIn("Sol 4118", html)
 
+    def test_generate_html_report_vo_dwa_dust(self):
+        """Verifies report renders visual odometry, DWA local reactive steering, and dust accumulation."""
+        img = np.zeros((32, 32, 3), dtype=np.uint8)
+        telemetry = {
+            "safety_status": "NOMINAL_DRIVE",
+            "traversability_index": 88.0,
+            "terrain_distribution_pct": {"soil": 50.0, "bedrock": 50.0, "sand": 0.0, "big rock": 0.0},
+            "visual_odometry": {
+                "total_keypoints": 142,
+                "bedrock_keypoints": 88,
+                "soil_keypoints": 54,
+                "sand_keypoints": 0,
+                "vo_confidence_pct": 86.5,
+                "measured_displacement_m": 0.98,
+                "wheel_slip_pct": 4.2,
+                "vo_status": "HIGH_CONFIDENCE_TRACKING",
+            },
+            "dwa_planner": {
+                "selected_v_cm_s": 4.5,
+                "selected_w_deg_s": 0.0,
+                "steer_action": "FORWARD_NOMINAL",
+                "trajectory_score": 0.92,
+                "evaluated_trajectories": 49,
+            },
+            "dust_accumulation": {
+                "optical_transmittance_pct": 91.2,
+                "dust_thickness_um": 0.45,
+                "contrast_reduction_pct": 8.8,
+                "clearing_vortex_prob_pct": 3.2,
+                "dust_status": "MODERATE_DUST_NOMINAL",
+            },
+        }
+
+        html = self.generator.generate_html_report(
+            telemetry=telemetry,
+            orig_img_np=img,
+            overlay_multiclass=img,
+            overlay_sand=img,
+            overlay_vo=img,
+            overlay_dwa=img,
+            overlay_dust=img,
+            sol_number=4130,
+        )
+        self.assertIn("Visual Odometry Feature Slip, DWA Local Reactive Steering & Optical Lens Dust", html)
+        self.assertIn("142", html)
+        self.assertIn("86.5%", html)
+        self.assertIn("FORWARD_NOMINAL", html)
+        self.assertIn("91.2%", html)
+        self.assertIn("0.45 μm", html)
+
 
 if __name__ == "__main__":
     unittest.main()

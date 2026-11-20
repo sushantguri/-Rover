@@ -33,6 +33,9 @@ from src.costmap_fusion import AutoNavCostmapFuser
 from src.stereo_geometry import RoverStereoGeometryEngine
 from src.aeolian_drift import MartianAeolianDriftModel
 from src.dsn_telemetry import DsnCommManager
+from src.visual_odometry import RoverVisualOdometryModel
+from src.dwa_local_planner import RoverDWALocalPlanner
+from src.dust_accumulation import MartianDustAccumulationModel
 
 SAMPLE_DIR = "sample_images"
 curated_sample_paths = [
@@ -138,6 +141,9 @@ def segment_mars_terrain(
         </div>
         """
         return (
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -411,6 +417,36 @@ def segment_mars_terrain(
         "link_budget": link_budget,
         "pass_schedule": pass_schedule,
     }
+
+    # 16. Visual Odometry Feature Tracking & Wheel Slip Compensation
+    vo_model = RoverVisualOdometryModel()
+    vo_telemetry = vo_model.evaluate_vo_tracking(
+        pred_np,
+        commanded_distance_m=1.0,
+        expected_wheel_slip_pct=mechanics["expected_wheel_slip_pct"],
+        image_np=orig_np,
+    )
+    vo_view = vo_model.render_tracking_overlay(orig_np, pred_np, vo_telemetry, alpha=opacity)
+
+    # 17. Dynamic Window Approach (DWA) Local Reactive Collision Avoidance
+    dwa_planner = RoverDWALocalPlanner()
+    dwa_telemetry = dwa_planner.plan_local_twist(
+        pred_np,
+        target_heading_deg=float(rover_heading_deg),
+        current_v_cm_s=recommended_speed_val,
+        current_w_deg_s=0.0,
+    )
+    dwa_view = dwa_planner.render_dwa_overlay(orig_np, pred_np, dwa_telemetry, alpha=opacity)
+
+    # 18. Martian Atmospheric Dust Deposition & Lens Transmittance Degradation
+    dust_model = MartianDustAccumulationModel()
+    dust_telemetry = dust_model.evaluate_dust_deposition(
+        sol_number=int(sol_number),
+        last_cleaning_sol=4000,
+        dust_tau=float(dust_tau),
+        wind_speed_m_s=float(wind_speed_m_s),
+    )
+    dust_view = dust_model.render_dust_overlay(orig_np, dust_telemetry, alpha=opacity)
 
     targets_list_html = "".join(
         f"<div style='display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:11.5px;'>"
@@ -767,6 +803,33 @@ def segment_mars_terrain(
                 </div>
             </div>
         </div>
+
+        <!-- Visual Odometry, DWA Local Steering & Optical Lens Dust -->
+        <div class="telemetry-card">
+            <div class="hud-header">VISUAL ODOMETRY SLIP, DWA LOCAL STEERING &amp; LENS DUST</div>
+            <div class="hud-grid">
+                <div class="hud-item">
+                    <div class="hud-label">VO KEYPOINTS / CONFIDENCE</div>
+                    <div class="hud-val">{vo_telemetry['total_keypoints']} kps ({vo_telemetry['vo_confidence_pct']:.0f}% trust)</div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">MEASURED WHEEL SLIP RATIO</div>
+                    <div class="hud-val" style="color: {'#ef4444' if vo_telemetry['wheel_slip_pct'] >= 40.0 else '#f59e0b' if vo_telemetry['wheel_slip_pct'] >= 20.0 else '#10b981'};">
+                        {vo_telemetry['wheel_slip_pct']:.1f}% ({vo_telemetry['vo_status'].split('_')[0]})
+                    </div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">DWA LOCAL STEER ACTION</div>
+                    <div class="hud-val" style="color: #38bdf8;">{dwa_telemetry['steer_action']} ({dwa_telemetry['selected_v_cm_s']:.1f} cm/s)</div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">OPTICAL LENS TRANSMITTANCE</div>
+                    <div class="hud-val" style="color: {'#ef4444' if dust_telemetry['optical_transmittance_pct'] < 70.0 else '#10b981'};">
+                        {dust_telemetry['optical_transmittance_pct']:.1f}% ({dust_telemetry['dust_thickness_um']:.2f} μm dust)
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
     """
 
@@ -784,6 +847,9 @@ def segment_mars_terrain(
         "stereo_geometry": stereo_hazards,
         "aeolian_drift": aeolian_telemetry,
         "dsn_telemetry": dsn_telemetry,
+        "visual_odometry": vo_telemetry,
+        "dwa_planner": dwa_telemetry,
+        "dust_accumulation": dust_telemetry,
         "safety_status": safety_status_code,
         "traversability_index": round(traversability, 1),
         "autonomous_drive_action": drive_action_code,
@@ -811,6 +877,9 @@ def segment_mars_terrain(
         overlay_fused_costmap=fused_costmap_view,
         overlay_stereo=stereo_view,
         overlay_aeolian=aeolian_view,
+        overlay_vo=vo_view,
+        overlay_dwa=dwa_view,
+        overlay_dust=dust_view,
     )
     report_path = os.path.join(tempfile.gettempdir(), f"nasa_sol_{int(sol_number)}_field_report.html")
     with open(report_path, "w", encoding="utf-8") as rf:
@@ -843,6 +912,9 @@ def segment_mars_terrain(
         fused_costmap_view,
         stereo_view,
         aeolian_view,
+        vo_view,
+        dwa_view,
+        dust_view,
         side_by_side_view,
         trajectory_view,
         uncertainty_view,
@@ -1348,6 +1420,12 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
                     output_stereo = gr.Image(type="numpy", label="3D Stereo Elevation & Step Hazard Relief (42cm Navcam Baseline)", height=420)
                 with gr.TabItem("💨 Aeolian Sand Drift"):
                     output_aeolian = gr.Image(type="numpy", label="Atmospheric Wind Saltation & Dune Slipface Vectors", height=420)
+                with gr.TabItem("🎯 Visual Odometry (VO)"):
+                    output_vo = gr.Image(type="numpy", label="VO Feature Displacements & Slip Tracking", height=420)
+                with gr.TabItem("🔄 DWA Reactive Trajectories"):
+                    output_dwa = gr.Image(type="numpy", label="Dynamic Window Collision-Avoidance Trajectory Fan", height=420)
+                with gr.TabItem("🌫️ Optical Lens Dust"):
+                    output_dust = gr.Image(type="numpy", label="Atmospheric Dust Deposition & Transmittance Degradation", height=420)
                 with gr.TabItem("↔️ Side-by-Side Dual View"):
                     output_sbs = gr.Image(type="numpy", label="Original Rover Photo vs Segmented Classification", height=420)
                 with gr.TabItem("🚀 A* Autonomous Drive Path"):
@@ -1433,6 +1511,9 @@ with gr.Blocks(title="NASA JPL Mars Rover Terrain Segmentation") as demo:
             output_fused_costmap,
             output_stereo,
             output_aeolian,
+            output_vo,
+            output_dwa,
+            output_dust,
             output_sbs,
             output_path,
             output_uncertainty,

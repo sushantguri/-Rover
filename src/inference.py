@@ -29,6 +29,9 @@ from src.costmap_fusion import AutoNavCostmapFuser
 from src.stereo_geometry import RoverStereoGeometryEngine
 from src.aeolian_drift import MartianAeolianDriftModel
 from src.dsn_telemetry import DsnCommManager
+from src.visual_odometry import RoverVisualOdometryModel
+from src.dwa_local_planner import RoverDWALocalPlanner
+from src.dust_accumulation import MartianDustAccumulationModel
 
 # Costmap palette: Bedrock=Cyan/Blue, Soil=Green, Sand=Orange (Hazard), Big Rock=Red (Obstacle)
 COST_PALETTE = np.array([
@@ -78,6 +81,9 @@ class MarsTerrainSegmenter:
         self.stereo_engine = RoverStereoGeometryEngine()
         self.aeolian_model = MartianAeolianDriftModel()
         self.dsn_manager = DsnCommManager()
+        self.vo_model = RoverVisualOdometryModel()
+        self.dwa_planner = RoverDWALocalPlanner()
+        self.dust_model = MartianDustAccumulationModel()
         self.mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
         self.std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
 
@@ -98,7 +104,11 @@ class MarsTerrainSegmenter:
         rover_heading_deg: float = 0.0,
         wind_speed_m_s: float = 8.0,
         wind_azimuth_deg: float = 270.0,
-        comm_profile: str = "UHF_MRO_RELAY"
+        comm_profile: str = "UHF_MRO_RELAY",
+        commanded_distance_m: float = 1.0,
+        target_heading_deg: float = 0.0,
+        sol_number: int = 4125,
+        last_cleaning_sol: int = 4000
     ) -> Dict[str, Any]:
         """
         Runs full terrain perception, generates visualizations, and computes drive telemetry.
@@ -295,10 +305,47 @@ class MarsTerrainSegmenter:
             "pass_schedule": pass_schedule,
         }
 
-        # Step Obstacle Escalation
+        # Visual Odometry (VO) & Feature Slip Compensation
+        vo_telemetry = self.vo_model.evaluate_vo_tracking(
+            pred_full,
+            commanded_distance_m=commanded_distance_m,
+            expected_wheel_slip_pct=mechanics_telemetry["expected_wheel_slip_pct"],
+            image_np=orig_np,
+        )
+        overlay_visual_odometry = self.vo_model.render_tracking_overlay(
+            orig_np, pred_full, vo_telemetry, alpha=opacity
+        )
+
+        # Dynamic Window Approach (DWA) Local Reactive Collision Avoidance
+        dwa_telemetry = self.dwa_planner.plan_local_twist(
+            pred_full,
+            target_heading_deg=target_heading_deg,
+            current_v_cm_s=recommended_speed_cm_s,
+            current_w_deg_s=0.0,
+        )
+        overlay_dwa_trajectories = self.dwa_planner.render_dwa_overlay(
+            orig_np, pred_full, dwa_telemetry, alpha=opacity
+        )
+
+        # Martian Atmospheric Dust Deposition & Lens Transmittance Degradation
+        dust_telemetry = self.dust_model.evaluate_dust_deposition(
+            sol_number=sol_number,
+            last_cleaning_sol=last_cleaning_sol,
+            dust_tau=dust_tau,
+            wind_speed_m_s=wind_speed_m_s,
+        )
+        overlay_dust_deposition = self.dust_model.render_dust_overlay(
+            orig_np, dust_telemetry, alpha=opacity
+        )
+
+        # Step Obstacle & DWA Collision Escalation
         if not stereo_hazards["traverse_permitted"] and safety_status != "CRITICAL_HAZARD":
             safety_status = "CRITICAL_HAZARD"
             drive_action = "EMERGENCY_HALT_STEP_HAZARD"
+            recommended_speed_cm_s = 0.0
+        elif dwa_telemetry["dwa_status"] == "DWA_EMERGENCY_STOP" and safety_status != "CRITICAL_HAZARD":
+            safety_status = "CRITICAL_HAZARD"
+            drive_action = "EMERGENCY_HALT_DWA_OBSTACLE"
             recommended_speed_cm_s = 0.0
 
         telemetry = {
@@ -325,6 +372,9 @@ class MarsTerrainSegmenter:
             "stereo_geometry": stereo_hazards,
             "aeolian_drift": aeolian_telemetry,
             "dsn_telemetry": dsn_telemetry,
+            "visual_odometry": vo_telemetry,
+            "dwa_planner": dwa_telemetry,
+            "dust_accumulation": dust_telemetry,
             "uncertainty": uncertainty_telemetry,
             "calibration_safety": calibration_safety,
             "geometry_risk": geometry_risk,
@@ -339,6 +389,9 @@ class MarsTerrainSegmenter:
             "overlay_fused_costmap": overlay_fused_costmap,
             "overlay_stereo_elevation": overlay_stereo_elevation,
             "overlay_aeolian_drift": overlay_aeolian_drift,
+            "overlay_visual_odometry": overlay_visual_odometry,
+            "overlay_dwa_trajectories": overlay_dwa_trajectories,
+            "overlay_dust_deposition": overlay_dust_deposition,
             "overlay_uncertainty": overlay_uncertainty,
             "overlay_zone_radar": overlay_zone_radar,
             "overlay_science_targets": overlay_science_targets,

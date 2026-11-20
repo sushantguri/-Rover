@@ -39,7 +39,10 @@ class MissionReportGenerator:
         overlay_wheel_wear: Optional[np.ndarray] = None,
         overlay_fused_costmap: Optional[np.ndarray] = None,
         overlay_stereo: Optional[np.ndarray] = None,
-        overlay_aeolian: Optional[np.ndarray] = None
+        overlay_aeolian: Optional[np.ndarray] = None,
+        overlay_vo: Optional[np.ndarray] = None,
+        overlay_dwa: Optional[np.ndarray] = None,
+        overlay_dust: Optional[np.ndarray] = None
     ) -> str:
         """
         Compiles complete telemetry and imagery into a polished printable HTML report.
@@ -61,6 +64,9 @@ class MissionReportGenerator:
         stereo = telemetry.get("stereo_geometry", {})
         aeolian = telemetry.get("aeolian_drift", {})
         dsn = telemetry.get("dsn_telemetry", {})
+        vo = telemetry.get("visual_odometry", {})
+        dwa = telemetry.get("dwa_planner", {})
+        dust = telemetry.get("dust_accumulation", {})
 
         sensor_row_html = ""
         if sensor:
@@ -143,6 +149,27 @@ class MissionReportGenerator:
                 <div class="img-box">
                     <img src="data:image/jpeg;base64,{b64_aeolian}" alt="Aeolian Drift Vectors">
                     <div class="img-caption">J. Aeolian Sand Drift & Dune Slipfaces</div>
+                </div>"""
+            if overlay_vo is not None:
+                b64_vo = _img_to_base64(overlay_vo)
+                extra_img_html += f"""
+                <div class="img-box">
+                    <img src="data:image/jpeg;base64,{b64_vo}" alt="Visual Odometry Tracking">
+                    <div class="img-caption">K. Visual Odometry Feature Slip Vectors</div>
+                </div>"""
+            if overlay_dwa is not None:
+                b64_dwa = _img_to_base64(overlay_dwa)
+                extra_img_html += f"""
+                <div class="img-box">
+                    <img src="data:image/jpeg;base64,{b64_dwa}" alt="DWA Local Reactive Trajectories">
+                    <div class="img-caption">L. DWA Reactive Collision-Avoidance Trajectories</div>
+                </div>"""
+            if overlay_dust is not None:
+                b64_dust = _img_to_base64(overlay_dust)
+                extra_img_html += f"""
+                <div class="img-box">
+                    <img src="data:image/jpeg;base64,{b64_dust}" alt="Dust Accumulation">
+                    <div class="img-caption">M. Optical Lens Dust Accumulation & Haze</div>
                 </div>"""
 
         advanced_section_html = ""
@@ -230,6 +257,35 @@ class MissionReportGenerator:
                     <tr><td>Dune Slipface Avalanche Risk</td><td><strong>{aeolian.get('slipface_risk_index', 0.0)} / 100</strong> ({aeolian.get('aeolian_hazard_level', 'NOMINAL')})</td></tr>
                     <tr><td>Optimal Dune Crossing Heading</td><td>{aeolian.get('optimal_crossing_heading_deg', 0.0)}° (Rel: {aeolian.get('relative_wind_heading_deg', 0.0)}°)</td></tr>
                     <tr><td>Next Relay Pass / Bitrate</td><td>{sched.get('next_orbiter', 'MRO')} in {sched.get('hours_until_pass', 0.0)}h ({link.get('effective_bitrate_kbps', 1024.0)} kbps)</td></tr>
+                </table>
+            </div>
+        </div>"""
+
+        vo_section_html = ""
+        if vo or dwa or dust:
+            vo_section_html = f"""
+        <h2>7. Visual Odometry Feature Slip, DWA Local Reactive Steering & Optical Lens Dust</h2>
+        <div class="grid-2">
+            <div class="card">
+                <strong>Visual Odometry & Feature Slip Tracking</strong>
+                <table>
+                    <tr><th>VO Parameter</th><th>Estimate</th></tr>
+                    <tr><td>Total Keypoints Tracked</td><td>{vo.get('total_keypoints', 0)} ({vo.get('firm_anchor_count', 0)} on firm bedrock/soil)</td></tr>
+                    <tr><td>Tracking Confidence Score</td><td><strong>{vo.get('vo_confidence_pct', 0.0)}%</strong></td></tr>
+                    <tr><td>Visual Ground Displacement</td><td>{vo.get('actual_distance_m', 0.0)} m (Cmd: {vo.get('commanded_distance_m', 0.0)} m)</td></tr>
+                    <tr><td>Measured Wheel Slip Ratio</td><td><strong>{vo.get('wheel_slip_pct', 0.0)}%</strong> ({vo.get('vo_status', 'NOMINAL')})</td></tr>
+                    <tr><td>Odometry Error Compensation</td><td>{vo.get('odometry_error_m', 0.0)} m delta</td></tr>
+                </table>
+            </div>
+            <div class="card">
+                <strong>DWA Local Steering & Lens Dust Deposition</strong>
+                <table>
+                    <tr><th>Autonomous Subsystem</th><th>Measurement</th></tr>
+                    <tr><td>DWA Steering Maneuver</td><td><strong>{dwa.get('steer_action', 'STRAIGHT_FORWARD')}</strong></td></tr>
+                    <tr><td>Selected Twist Command</td><td>{dwa.get('selected_v_cm_s', 0.0)} cm/s @ {dwa.get('selected_w_deg_s', 0.0)}°/s ({dwa.get('dwa_status', 'NOMINAL')})</td></tr>
+                    <tr><td>Optical Window Transmittance</td><td><strong>{dust.get('optical_transmittance_pct', 100.0)}%</strong> ({dust.get('mitigation_status', 'NOMINAL')})</td></tr>
+                    <tr><td>Dust Layer / Contrast Loss</td><td>{dust.get('dust_thickness_um', 0.0)} μm ({dust.get('contrast_loss_pct', 0.0)}% contrast loss)</td></tr>
+                    <tr><td>Convective Vortex Probability</td><td>{dust.get('convective_vortex_prob_pct', 0.0)}% / sol (Cleaning event)</td></tr>
                 </table>
             </div>
         </div>"""
@@ -442,6 +498,7 @@ class MissionReportGenerator:
         {advanced_section_html}
         {wear_section_html}
         {stereo_section_html}
+        {vo_section_html}
 
         <div class="footer">
             Automated Robotics Perception Report • NASA AI4Mars Terrain Segmentation Framework • DeepLabV3+ ResNet-50

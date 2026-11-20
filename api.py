@@ -86,6 +86,9 @@ def root():
             "/v1/stereo-geometry",
             "/v1/aeolian-drift",
             "/v1/dsn-budget",
+            "/v1/visual-odometry",
+            "/v1/dwa-plan",
+            "/v1/dust-accumulation",
             "/v1/classes"
         ]
     }
@@ -120,6 +123,10 @@ async def segment_terrain(
     wind_speed_m_s: float = Query(8.0, ge=0.0, le=60.0, description="Martian wind speed in m/s"),
     wind_azimuth_deg: float = Query(270.0, ge=0.0, le=360.0, description="Wind source azimuth in degrees"),
     comm_profile: str = Query("UHF_MRO_RELAY", description="DSN / Orbiter relay profile"),
+    commanded_distance_m: float = Query(1.0, ge=0.1, le=20.0, description="Commanded wheel drive distance in meters"),
+    target_heading_deg: float = Query(0.0, ge=-180.0, le=180.0, description="Target waypoint heading in degrees"),
+    sol_number: int = Query(4125, ge=1, le=10000, description="Mars mission sol number"),
+    last_cleaning_sol: int = Query(4000, ge=1, le=10000, description="Last convective vortex cleaning sol"),
     include_base64_overlays: bool = Query(False, description="Whether to include base64-encoded JPEG overlays")
 ):
     try:
@@ -144,6 +151,10 @@ async def segment_terrain(
         wind_speed_m_s=wind_speed_m_s,
         wind_azimuth_deg=wind_azimuth_deg,
         comm_profile=comm_profile,
+        commanded_distance_m=commanded_distance_m,
+        target_heading_deg=target_heading_deg,
+        sol_number=sol_number,
+        last_cleaning_sol=last_cleaning_sol,
     )
 
     response = {
@@ -158,6 +169,9 @@ async def segment_terrain(
             "fused_costmap": encode_image_base64(result["overlay_fused_costmap"]),
             "stereo_elevation": encode_image_base64(result["overlay_stereo_elevation"]),
             "aeolian_drift": encode_image_base64(result["overlay_aeolian_drift"]),
+            "visual_odometry": encode_image_base64(result["overlay_visual_odometry"]),
+            "dwa_trajectories": encode_image_base64(result["overlay_dwa_trajectories"]),
+            "dust_deposition": encode_image_base64(result["overlay_dust_deposition"]),
             "uncertainty_heatmap": encode_image_base64(result["overlay_uncertainty"]),
             "zone_radar": encode_image_base64(result["overlay_zone_radar"]),
             "science_targets": encode_image_base64(result["overlay_science_targets"]),
@@ -333,6 +347,97 @@ async def evaluate_dsn_budget(
         "safety_status": result["telemetry"]["safety_status"],
     }
     return JSONResponse(content=response)
+
+
+@app.post("/v1/visual-odometry")
+async def evaluate_visual_odometry(
+    file: UploadFile = File(...),
+    resolution: int = Query(512, ge=64, le=1024, description="Inference resolution"),
+    commanded_distance_m: float = Query(1.0, ge=0.1, le=20.0, description="Commanded wheel drive distance in meters"),
+    include_base64_overlay: bool = Query(False, description="Whether to include base64-encoded VO feature tracking overlay")
+):
+    """Evaluates visual odometry feature tracking, true ground displacement, and wheel slip ratio."""
+    try:
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid image format: {e}")
+
+    segmenter = get_segmenter()
+    result = segmenter.predict(
+        image,
+        img_size=resolution,
+        commanded_distance_m=commanded_distance_m,
+    )
+
+    response: Dict[str, Any] = {
+        "visual_odometry": result["telemetry"]["visual_odometry"],
+        "safety_status": result["telemetry"]["safety_status"],
+    }
+    if include_base64_overlay:
+        response["visual_odometry_overlay"] = encode_image_base64(result["overlay_visual_odometry"])
+
+    return JSONResponse(content=response)
+
+
+@app.post("/v1/dwa-plan")
+async def evaluate_dwa_local_plan(
+    file: UploadFile = File(...),
+    resolution: int = Query(512, ge=64, le=1024, description="Inference resolution"),
+    target_heading_deg: float = Query(0.0, ge=-180.0, le=180.0, description="Target waypoint heading in degrees"),
+    include_base64_overlay: bool = Query(False, description="Whether to include base64-encoded DWA trajectories fan overlay")
+):
+    """Simulates Dynamic Window Approach (DWA) circular arc rollouts for reactive local obstacle avoidance."""
+    try:
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid image format: {e}")
+
+    segmenter = get_segmenter()
+    result = segmenter.predict(
+        image,
+        img_size=resolution,
+        target_heading_deg=target_heading_deg,
+    )
+
+    dwa_data = result["telemetry"]["dwa_planner"]
+    response: Dict[str, Any] = {
+        "dwa_planner": {
+            "selected_v_cm_s": dwa_data["selected_v_cm_s"],
+            "selected_w_deg_s": dwa_data["selected_w_deg_s"],
+            "steer_action": dwa_data["steer_action"],
+            "dwa_status": dwa_data["dwa_status"],
+            "heading_alignment_pct": dwa_data["heading_alignment_pct"],
+            "clearance_margin_pct": dwa_data["clearance_margin_pct"],
+            "candidate_count": dwa_data["candidate_count"],
+        },
+        "safety_status": result["telemetry"]["safety_status"],
+    }
+    if include_base64_overlay:
+        response["dwa_trajectories_overlay"] = encode_image_base64(result["overlay_dwa_trajectories"])
+
+    return JSONResponse(content=response)
+
+
+@app.get("/v1/dust-accumulation")
+def query_dust_accumulation(
+    sol_number: int = Query(4125, ge=1, le=10000, description="Mars mission sol number"),
+    last_cleaning_sol: int = Query(4000, ge=1, le=10000, description="Last convective vortex cleaning sol"),
+    dust_tau: float = Query(0.5, ge=0.1, le=6.0, description="Atmospheric dust optical depth tau"),
+    wind_speed_m_s: float = Query(8.0, ge=0.0, le=60.0, description="Martian wind speed in m/s")
+):
+    """Calculates camera optical window dust settling, contrast attenuation, and cleaning vortex probability."""
+    from src.dust_accumulation import MartianDustAccumulationModel
+    model = MartianDustAccumulationModel()
+    return JSONResponse(
+        content=model.evaluate_dust_deposition(
+            sol_number=sol_number,
+            last_cleaning_sol=last_cleaning_sol,
+            dust_tau=dust_tau,
+            wind_speed_m_s=wind_speed_m_s,
+        )
+    )
 
 
 @app.post("/v1/plan")

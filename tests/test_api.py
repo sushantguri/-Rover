@@ -27,6 +27,9 @@ class TestFastApiEndpoints(unittest.TestCase):
         self.assertIn("/v1/stereo-geometry", r_root.json()["endpoints"])
         self.assertIn("/v1/aeolian-drift", r_root.json()["endpoints"])
         self.assertIn("/v1/dsn-budget", r_root.json()["endpoints"])
+        self.assertIn("/v1/visual-odometry", r_root.json()["endpoints"])
+        self.assertIn("/v1/dwa-plan", r_root.json()["endpoints"])
+        self.assertIn("/v1/dust-accumulation", r_root.json()["endpoints"])
 
         r_classes = self.client.get("/v1/classes")
         self.assertEqual(r_classes.status_code, 200)
@@ -57,6 +60,9 @@ class TestFastApiEndpoints(unittest.TestCase):
         self.assertIn("wheel_wear", data["overlays"])
         self.assertIn("stereo_elevation", data["overlays"])
         self.assertIn("aeolian_drift", data["overlays"])
+        self.assertIn("visual_odometry", data["overlays"])
+        self.assertIn("dwa_trajectories", data["overlays"])
+        self.assertIn("dust_deposition", data["overlays"])
         self.assertIn("traversability_index", data["telemetry"])
         self.assertIn("geometry_risk", data["telemetry"])
         self.assertIn("sensor_health", data["telemetry"])
@@ -67,6 +73,9 @@ class TestFastApiEndpoints(unittest.TestCase):
         self.assertIn("costmap_fusion", data["telemetry"])
         self.assertIn("stereo_geometry", data["telemetry"])
         self.assertIn("aeolian_drift", data["telemetry"])
+        self.assertIn("visual_odometry", data["telemetry"])
+        self.assertIn("dwa_planner", data["telemetry"])
+        self.assertIn("dust_accumulation", data["telemetry"])
         self.assertIn("dsn_telemetry", data["telemetry"])
         self.assertEqual(data["telemetry"]["slope_stability"]["pitch_deg"], 12.0)
         self.assertEqual(data["telemetry"]["solar_thermal"]["dust_optical_depth_tau"], 0.7)
@@ -243,6 +252,52 @@ class TestFastApiEndpoints(unittest.TestCase):
         self.assertIn("pass_schedule", data)
         self.assertEqual(data["link_budget"]["comm_profile"], "UHF_MRO_RELAY")
         self.assertGreater(data["link_budget"]["effective_bitrate_kbps"], 1000.0)
+
+    def test_visual_odometry_endpoint(self):
+        """Verifies /v1/visual-odometry computes feature slip and tracking vectors."""
+        img = Image.fromarray(np.random.randint(50, 200, (64, 64, 3), dtype=np.uint8))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+        buf.seek(0)
+
+        resp = self.client.post(
+            "/v1/visual-odometry?resolution=256&commanded_distance_m=1.2&expected_slip_pct=10.0&include_base64_overlay=true",
+            files={"file": ("vo_test.jpg", buf, "image/jpeg")},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("visual_odometry", data)
+        self.assertIn("visual_odometry_overlay", data)
+        self.assertIn("vo_confidence_pct", data["visual_odometry"])
+        self.assertIn("wheel_slip_pct", data["visual_odometry"])
+
+    def test_dwa_plan_endpoint(self):
+        """Verifies /v1/dwa-plan evaluates reactive trajectory fan and collision clearance."""
+        img = Image.fromarray(np.random.randint(50, 200, (64, 64, 3), dtype=np.uint8))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+        buf.seek(0)
+
+        resp = self.client.post(
+            "/v1/dwa-plan?resolution=256&target_heading_deg=10.0&current_v_cm_s=3.5&include_base64_overlay=true",
+            files={"file": ("dwa_test.jpg", buf, "image/jpeg")},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("dwa_planner", data)
+        self.assertIn("dwa_trajectories_overlay", data)
+        self.assertIn("selected_v_cm_s", data["dwa_planner"])
+        self.assertIn("steer_action", data["dwa_planner"])
+
+    def test_dust_accumulation_endpoint(self):
+        """Verifies /v1/dust-accumulation computes sol dust layer thickness and optical transmittance."""
+        resp = self.client.get("/v1/dust-accumulation?sol_number=4200&last_cleaning_sol=4000&dust_tau=0.8&wind_speed_m_s=8.0")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["sol_number"], 4200)
+        self.assertIn("optical_transmittance_pct", data)
+        self.assertIn("dust_thickness_um", data)
+        self.assertIn("contrast_loss_pct", data)
 
 
 if __name__ == "__main__":

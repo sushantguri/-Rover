@@ -29,6 +29,9 @@ class TestInferencePipeline(unittest.TestCase):
             "overlay_fused_costmap",
             "overlay_stereo_elevation",
             "overlay_aeolian_drift",
+            "overlay_visual_odometry",
+            "overlay_dwa_trajectories",
+            "overlay_dust_deposition",
             "overlay_uncertainty", 
             "overlay_zone_radar",
             "overlay_science_targets",
@@ -46,6 +49,9 @@ class TestInferencePipeline(unittest.TestCase):
         self.assertEqual(result["overlay_fused_costmap"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_stereo_elevation"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_aeolian_drift"].shape, (128, 128, 3))
+        self.assertEqual(result["overlay_visual_odometry"].shape, (128, 128, 3))
+        self.assertEqual(result["overlay_dwa_trajectories"].shape, (128, 128, 3))
+        self.assertEqual(result["overlay_dust_deposition"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_uncertainty"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_zone_radar"].shape, (128, 128, 3))
         self.assertEqual(result["overlay_science_targets"].shape, (128, 128, 3))
@@ -70,6 +76,9 @@ class TestInferencePipeline(unittest.TestCase):
         self.assertIn("science_targets", telemetry)
         self.assertIn("stereo_geometry", telemetry)
         self.assertIn("aeolian_drift", telemetry)
+        self.assertIn("visual_odometry", telemetry)
+        self.assertIn("dwa_planner", telemetry)
+        self.assertIn("dust_accumulation", telemetry)
         self.assertIn("dsn_telemetry", telemetry)
         self.assertIn("sensor_health", telemetry)
         self.assertIn("sensor_health_status", telemetry["sensor_health"])
@@ -171,6 +180,33 @@ class TestInferencePipeline(unittest.TestCase):
         self.assertIn("effective_bitrate_kbps", t["dsn_telemetry"]["link_budget"])
         self.assertIn("pass_schedule", t["dsn_telemetry"])
         self.assertIn("packets", t["dsn_telemetry"])
+
+    def test_vo_dwa_and_dust_telemetry(self):
+        """Verifies visual odometry slip tracking, DWA arc selection, and dust layer metrics."""
+        dummy_img = Image.new("RGB", (64, 64), color=(150, 120, 90))
+        result = self.segmenter.predict(
+            dummy_img,
+            img_size=64,
+            commanded_distance_m=1.2,
+            target_heading_deg=20.0,
+            sol_number=4150,
+            last_cleaning_sol=4000,
+        )
+        t = result["telemetry"]
+        self.assertIn("visual_odometry", t)
+        self.assertIn("vo_confidence_pct", t["visual_odometry"])
+        self.assertIn("wheel_slip_pct", t["visual_odometry"])
+        self.assertIn("vo_status", t["visual_odometry"])
+
+        self.assertIn("dwa_planner", t)
+        self.assertIn("steer_action", t["dwa_planner"])
+        self.assertIn("selected_v_cm_s", t["dwa_planner"])
+        self.assertIn("candidate_count", t["dwa_planner"])
+
+        self.assertIn("dust_accumulation", t)
+        self.assertIn("optical_transmittance_pct", t["dust_accumulation"])
+        self.assertIn("dust_thickness_um", t["dust_accumulation"])
+        self.assertIn("contrast_loss_pct", t["dust_accumulation"])
 
 
 if __name__ == "__main__":
